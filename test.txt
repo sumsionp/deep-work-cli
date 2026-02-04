@@ -1,0 +1,55 @@
+[] Test out DeepWorkCLI
+
+I think this could be good. It's pretty cool that there are related tools, but they don't have quite the same workflow. I think this will fit my style better than the others described.
+
+I am really worried that Julie had to respond to Customer. At least I assume that she felt like she had to.
+
+[] Respond to Customer about the go issue
+
+[] Do this tomorrow
+
+[] Assign this one to another
+
+------- Triage 12:27 PM -------
+[] Test out DeepWorkCLI
+I think this could be good. It's pretty cool that there are related tools, but they don't have quite the same workflow. I think this will fit my style better than the others described.
+I am really worried that Julie had to respond to Customer. At least I assume that she felt like she had to.
+[] Respond to Customer about the go issue
+[] Do this tomorrow
+[] Assign this one to another
+
+------- Work 12:28 PM -------
+[x] Test out DeepWorkCLI
+
+------- Work 12:28 PM -------
+[x] I think this could be good. It's pretty cool that there are related tools, but they don't have quite the same workflow. I think this will fit my style better than the others described.
+
+------- Work 12:28 PM -------
+[x] I am really worried that Julie had to respond to Customer. At least I assume that she felt like she had to.
+
+------- Work 12:29 PM -------
+[x] Respond to Customer about the go issue
+
+------- Work 12:29 PM -------
+[x] Do this tomorrow
+
+------- Work 12:29 PM -------
+[x] Assign this one to another
+
+Well, that went ok. However, it required my list to be more organized than I like. I want to be able to just think out loud in my editor and not worry about whether the thing I'm writing is important or not.
+
+There was an error also when I completed all the tasks. It said: [!] ALL DEPTH REACHED
+That shouldn't show what looks like an error. It should show a prompt to go back and do another free write session to find out what else needs to be done.
+
+There was also another error. Let's:
+[] Test out the error
+[] This should be a subtask of the first task
+
+The error was: Status: Error: not enough values to unpack (expected 3, got 2)
+
+This happened when I typed a# # to assign a task as a subtask of another.
+
+Also, there seems to be no ignore functionality. I should be able to type i# to ignore the entry at that line. That should remove it from my triage list, but not write anything to the file.
+
+Two more things:
+The last completed task was listed in my next triage session even though it was completed. This could be handled by triage ignoring any lines starting with a non-pending status, or a marker needs to be placed when moving from work mode.

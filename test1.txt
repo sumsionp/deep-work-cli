@@ -1,0 +1,40 @@
+[] Test DeepWorkCLI
+[] Test making this a subtask
+
+Can I ignore this line and have it be removed from my triage list?
+
+Make this a note on another task
+
+Here are some tasks to test reordering
+[] Do this task last
+[] Work on this task first
+[] Put this task at the very top
+
+------- Triage 01:10 PM -------
+[] Put this task at the very top
+[] Test DeepWorkCLI
+  [] Test making this a subtask
+  Make this a note on another task
+[] Work on this task first
+[] Do this task last
+
+------- Work 01:10 PM -------
+[x] Put this task at the very top
+
+------- Work 01:11 PM -------
+[x] Test DeepWorkCLI
+  [x] Test making this a subtask
+  Make this a note on another task
+
+------- Work 01:11 PM -------
+[x] Work on this task first
+
+------- Work 01:11 PM -------
+[x] Do this task last
+
+That went much better than last time. A few things I noticed:
+- In work mode, I wasn't able to mark a subtask as completed unless I marked the whole task completed. This is problematic if I have more than one subtask and want to check them off one at a time. I want to be able to type x# to mark a specific task as completed.
+- After completing all the tasks, I got this: "[DONE] Task journal updated." I want a reminder to take a break and then go back to my free writing to find out what needs to be done next.
+- The statuses worked much better this time. However, the status message should be cleared when I move from triage to work mode. The last status from triage mode was distracting in work mode.
+- Ignoring a line worked great for the most part. However, an ignored line reappeared after I moved a task to be a subtask of another one.
+- Typing a# # gave me an error. It worked when I typed a # #. I want to be able to use either version. The same goes for the p command.

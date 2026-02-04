@@ -1,0 +1,13 @@
+[] Defer this task until tomorrow
+[] Defer this task with its subtasks
+  [] This subtask should be deferred too
+
+------- Triage 06:28 PM -------
+[] Defer this task until tomorrow
+[] Defer this task with its subtasks
+  [] This subtask should be deferred too
+
+------- Work 06:28 PM -------
+[>] Defer this task until tomorrow
+[>] Defer this task with its subtasks
+  [>] This subtask should be deferred too
