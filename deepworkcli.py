@@ -3,6 +3,7 @@ import sys
 import re
 import time
 import logging
+import copy
 from datetime import datetime, timedelta
 
 # --- CONFIG ---
@@ -28,6 +29,7 @@ class DeepWorkCLI:
     def __init__(self):
         self.mode = "TRIAGE"
         self.triage_stack = []
+        self.initial_stack = []
         self.ignored_indices = set()
         self.last_msg = "DeepWorkCLI Ready."
         self.task_start_time = None
@@ -35,64 +37,144 @@ class DeepWorkCLI:
     def get_daily_summary(self):
         counts = {'[x]': 0, '[-]': 0, '[>]': 0}
         if not os.path.exists(FILENAME): return counts
+
+        seen_tasks = set()
         with open(FILENAME, 'r') as f:
-            for line in f:
-                # Count top-level markers for the scorecard
-                if not line.startswith('  '):
-                    for marker in counts:
-                        if line.strip().startswith(marker):
-                            counts[marker] += 1
+            lines = f.readlines()
+            for line in reversed(lines):
+                clean = line.strip()
+                if not clean or "-------" in clean or line.startswith('  '):
+                    continue
+
+                marker_match = re.match(r'^\[([x\->])\]', clean)
+                if marker_match:
+                    state = marker_match.group(1)
+                    content = clean[marker_match.end():].strip()
+                    if content not in seen_tasks:
+                        counts[f'[{state}]'] += 1
+                        seen_tasks.add(content)
         return counts
 
+    def update_task_in_file(self, task_line_content, new_marker, target_file=None):
+        dest = target_file if target_file else FILENAME
+        if not os.path.exists(dest): return
+
+        with open(dest, 'r') as f:
+            lines = f.readlines()
+
+        new_lines = []
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            if not line.strip() or "-------" in line:
+                new_lines.append(line)
+                i += 1
+                continue
+
+            clean_line = re.sub(r'^\[[x\->\s]?\]\s*', '', line.strip())
+            if clean_line == task_line_content:
+                leading_spaces = line[:line.find(line.strip())]
+                new_lines.append(f"{leading_spaces}{new_marker} {task_line_content}\n")
+
+                i += 1
+                while i < len(lines) and (lines[i].startswith('  ') or not lines[i].strip()):
+                    if lines[i].strip():
+                        note_content = re.sub(r'^\[[x\->\s]?\]\s*', '', lines[i].strip())
+                        leading_note_spaces = lines[i][:lines[i].find(lines[i].strip())]
+                        new_lines.append(f"{leading_note_spaces}{new_marker} {note_content}\n")
+                    else:
+                        new_lines.append(lines[i])
+                    i += 1
+                continue
+            else:
+                new_lines.append(line)
+            i += 1
+
+        with open(dest, 'w') as f:
+            f.writelines(new_lines)
+
     def load_context(self):
-        """Hierarchy-aware parser that strictly ignores any marked [x], [-], or [>]."""
+        """Whole-file aware parser. Authoritative version is the latest one."""
         if not os.path.exists(FILENAME):
             with open(FILENAME, 'w') as f: f.write(f"Session Start - {get_timestamp()}\n")
+            self.triage_stack = []
+            return
         
         with open(FILENAME, 'r') as f:
             lines = [l.rstrip() for l in f.readlines()]
 
-        last_marker_idx = -1
-        for i, line in enumerate(lines):
-            if "-------" in line: last_marker_idx = i
+        all_entries = {} # content_key -> {line, notes, is_task, state, order}
+        order_counter = 0
         
-        dump = lines[last_marker_idx+1:]
-        self.triage_stack = []
-        
-        for line in dump:
-            clean = line.strip()
-            if not clean or clean.startswith('-------'): continue
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            if not line.strip() or "-------" in line:
+                i += 1
+                continue
             
-            # CRITICAL FIX: Ignore ANY line (indented or not) starting with a status marker
-            if re.match(r'^\[[x\->]\]', clean): continue 
-            
-            if line.startswith('  ') and self.triage_stack:
-                self.triage_stack[-1]['notes'].append(line.strip())
+            if not line.startswith('  '):
+                clean = line.strip()
+                marker_match = re.match(r'^\[([x\->\s]?)\]\s*', clean)
+                if marker_match:
+                    state = marker_match.group(1)
+                    content = clean[marker_match.end():]
+                else:
+                    state = ""
+                    content = clean
+
+                notes = []
+                i += 1
+                while i < len(lines) and (lines[i].startswith('  ') or not lines[i].strip()):
+                    if lines[i].strip():
+                        notes.append(lines[i].strip())
+                    i += 1
+
+                if content in all_entries:
+                    # Append new notes if not already there
+                    existing_notes = all_entries[content]['notes']
+                    for n in notes:
+                        if n not in existing_notes:
+                            existing_notes.append(n)
+                    # Latest state and order wins
+                    all_entries[content]['state'] = state
+                    all_entries[content]['order'] = order_counter
+                    if marker_match:
+                        all_entries[content]['is_task'] = True
+                        all_entries[content]['line'] = f"[] {content}"
+                else:
+                    all_entries[content] = {
+                        'line': f"[] {content}" if marker_match else content,
+                        'notes': notes,
+                        'is_task': bool(marker_match),
+                        'state': state,
+                        'order': order_counter
+                    }
+                order_counter += 1
             else:
-                self.triage_stack.append({'line': line.strip(), 'notes': []})
+                i += 1
+
+        sorted_entries = sorted(all_entries.values(), key=lambda x: x['order'])
+        self.triage_stack = []
+        for e in sorted_entries:
+            if not e['is_task'] or e['state'] in ['', ' ']:
+                self.triage_stack.append({'line': e['line'], 'notes': e['notes']})
+
         self.ignored_indices = set()
 
     def commit_to_ledger(self, mode_label, items, target_file=None):
-        if not items: return
         dest = target_file if target_file else FILENAME
-        
-        exists = os.path.exists(dest)
-        has_marker = False
-        if exists:
-            with open(dest, 'r') as f:
-                if mode_label in f.read():
-                    has_marker = True
-
         with open(dest, 'a') as f:
-            if not has_marker:
-                f.write(f"\n------- {mode_label} {get_timestamp()} -------\n")
-            for t in items:
-                f.write(f"{t['line']}\n")
-                for n in t['notes']:
-                    f.write(f"  {n}\n")
+            f.write(f"\n------- {mode_label} {get_timestamp()} -------\n")
+            if items:
+                for t in items:
+                    f.write(f"{t['line']}\n")
+                    for n in t['notes']:
+                        f.write(f"  {n}\n")
 
     def run(self):
         self.load_context()
+        self.initial_stack = copy.deepcopy(self.triage_stack)
         while True:
             os.system('clear')
             if self.mode == "TRIAGE":
@@ -168,10 +250,14 @@ class DeepWorkCLI:
             base_cmd = parts[0]
             
             if base_cmd == 'q':
-                if self.mode == "WORK" and self.triage_stack:
+                if self.triage_stack:
                     print(f"\n\033[1;33m[!] Session Interrupted.\033[0m")
                     if input("Rescue remaining tasks to Free Write? (y/n): ").lower() == 'y':
                         self.commit_to_ledger("Interrupted", self.triage_stack)
+                    else:
+                        self.commit_to_ledger("Interrupted", [])
+                else:
+                    self.commit_to_ledger("Interrupted", [])
                 return "QUIT"
 
             if base_cmd == 't': 
@@ -181,9 +267,11 @@ class DeepWorkCLI:
             if self.mode == "TRIAGE":
                 if base_cmd == 'w':
                     active = [t for i, t in enumerate(self.triage_stack) if i not in self.ignored_indices]
-                    self.commit_to_ledger("Triage", active)
+                    items_to_write = active if active != self.initial_stack else []
+                    self.commit_to_ledger("Triage", items_to_write)
                     self.triage_stack = active
                     self.mode = "WORK"; self.last_msg = ""
+                    self.initial_stack = copy.deepcopy(self.triage_stack)
                 elif base_cmd == 'i':
                     self.ignored_indices.add(int(parts[1]))
                 elif base_cmd == 'p':
@@ -199,23 +287,33 @@ class DeepWorkCLI:
                 match_x = re.match(r'^x(\d+)', cmd)
                 if match_x:
                     idx = int(match_x.group(1))
+                    subtask_content = re.sub(r'^\[[x\->\s]?\]\s*', '', task['notes'][idx])
                     task['notes'][idx] = re.sub(r'^\[\s?\]', '[x]', task['notes'][idx])
+                    self.update_task_in_file(subtask_content, "[x]")
                     return
 
                 if base_cmd in ['x', '-', '>']:
+                    marker = {'x': '[x]', '-': '[-]', '>': '[>]'}[base_cmd]
+                    task_content = re.sub(r'^\[[x\->\s]?\]\s*', '', task['line'])
+
+                    self.update_task_in_file(task_content, marker)
+                    for n in task['notes']:
+                        n_content = re.sub(r'^\[[x\->\s]?\]\s*', '', n)
+                        self.update_task_in_file(n_content, marker)
+
                     if base_cmd == '>':
                         tomorrow = get_tomorrow_file()
-                        # Defer a clean copy (pending states) to tomorrow
-                        self.commit_to_ledger("Deferred from last session", [task], target_file=tomorrow)
+                        clean_task = copy.deepcopy(task)
+                        clean_task['line'] = f"[] {task_content}"
+                        clean_task['notes'] = [re.sub(r'^\[[x\->\s]?\]\s*', '', n) for n in clean_task['notes']]
+                        self.commit_to_ledger("Deferred from last session", [clean_task], target_file=tomorrow)
                     
-                    marker = {'x': '[x]', '-': '[-]', '>': '[>]'}[base_cmd]
-                    task['line'] = f"{marker} " + re.sub(r'^\[\s?\]\s*', '', task['line'])
-                    
-                    # Force the marker on ALL sub-notes/tasks in today's file to kill orphans
+                    task['line'] = f"{marker} {task_content}"
                     task['notes'] = [f"{marker} " + re.sub(r'^\[[x\->\s]?\]\s*', '', n) for n in task['notes']]
                     
                     self.commit_to_ledger("Work", [self.triage_stack.pop(0)])
                     self.task_start_time = None
+                    self.initial_stack = copy.deepcopy(self.triage_stack)
 
         except Exception as e:
             self.last_msg = f"Error: {e}"
