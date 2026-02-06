@@ -57,8 +57,9 @@ class DeepWorkCLI:
             if "-------" in line: last_marker_idx = i
         
         dump = lines[last_marker_idx+1:]
-        self.triage_stack = []
         
+        new_stack = []
+        seen = set()
         for line in dump:
             clean = line.strip()
             if not clean or clean.startswith('-------'): continue
@@ -66,10 +67,18 @@ class DeepWorkCLI:
             # CRITICAL FIX: Ignore ANY line (indented or not) starting with a status marker
             if re.match(r'^\[[x\->]\]', clean): continue 
             
-            if line.startswith('  ') and self.triage_stack:
-                self.triage_stack[-1]['notes'].append(line.strip())
+            if line.startswith('  ') and new_stack:
+                new_stack[-1]['notes'].append(line.strip())
             else:
-                self.triage_stack.append({'line': line.strip(), 'notes': []})
+                new_stack.append({'line': line.strip(), 'notes': []})
+
+        self.triage_stack = []
+        for item in new_stack:
+            # Create a unique key based on the task line and its notes
+            key = (item['line'], tuple(item['notes']))
+            if key not in seen:
+                self.triage_stack.append(item)
+                seen.add(key)
         self.ignored_indices = set()
 
     def commit_to_ledger(self, mode_label, items, target_file=None):
@@ -78,18 +87,44 @@ class DeepWorkCLI:
         
         exists = os.path.exists(dest)
         has_marker = False
+        last_section_content = ""
+
         if exists:
             with open(dest, 'r') as f:
-                if mode_label in f.read():
-                    has_marker = True
+                lines = f.readlines()
+                # Find the last marker
+                for line in reversed(lines):
+                    if "-------" in line:
+                        if mode_label in line:
+                            has_marker = True
+                        break
+
+                # Also get content of the last section to prevent duplicate appends within it
+                content = "".join(lines)
+                parts = re.split(r'------- .*? -------', content)
+                if parts:
+                    last_section_content = parts[-1]
 
         with open(dest, 'a') as f:
             if not has_marker:
                 f.write(f"\n------- {mode_label} {get_timestamp()} -------\n")
-            for t in items:
-                f.write(f"{t['line']}\n")
-                for n in t['notes']:
-                    f.write(f"  {n}\n")
+                # When writing a new marker, we always write all items (new section)
+                for t in items:
+                    f.write(f"{t['line']}\n")
+                    for n in t['notes']:
+                        f.write(f"  {n}\n")
+            else:
+                # Appending to an existing section - check for duplicates
+                for t in items:
+                    task_lines = [t['line']] + [f"  {n}" for n in t['notes']]
+                    task_block = "\n".join(task_lines)
+
+                    # Ensure we don't match partial tasks (e.g., "[] Task 1" matching "[] Task 10")
+                    pattern = re.escape(task_block)
+                    if not re.search(f'(^|\n){pattern}(\n|$)', last_section_content):
+                        f.write(f"{t['line']}\n")
+                        for n in t['notes']:
+                            f.write(f"  {n}\n")
 
     def run(self):
         self.load_context()
