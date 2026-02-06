@@ -221,14 +221,19 @@ class DeepWorkCLI:
             base_cmd = parts[0]
             
             if base_cmd == 'q':
-                if self.triage_stack:
+                active = [t for i, t in enumerate(self.triage_stack) if i not in self.ignored_indices]
+                if active:
                     print(f"\n\033[1;33m[!] Session Interrupted.\033[0m")
                     if input("Rescue remaining tasks to Free Write? (y/n): ").lower() == 'y':
-                        self.commit_to_ledger("Interrupted", self.triage_stack)
+                        self.commit_to_ledger("Interrupted", active)
                     else:
                         self.commit_to_ledger("Interrupted", [])
                 else:
-                    self.commit_to_ledger("Interrupted", [])
+                    if self.mode == "WORK":
+                        print(f"\n\033[1;32m[+] Work Session Complete.\033[0m")
+                        self.commit_to_ledger("Work Session Complete", [])
+                    else:
+                        self.commit_to_ledger("Triage", [])
                 return "QUIT"
 
             if base_cmd == 't': 
