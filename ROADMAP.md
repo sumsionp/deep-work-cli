@@ -1,5 +1,7 @@
 Future Roadmap:
 
+Rename Work Mode to Focus Mode: The whole point of the program is to enable a process of iterative organization and then focus. I like calling it a Focus Session rather than a Work Session. It sounds more appealing somehow. Focus has less of a negative conotation than Work.
+
 Deadline Timer: Countdown in the Work Mode header for tasks with specific time-of-day deadlines.
 
 Task Timer vs Work Mode Timer: Have an overall session timer and individual task timers. These will work like a stopwatch to track how long the session has been going and how long each task has taken. This could also be used to remind about taking breaks.
