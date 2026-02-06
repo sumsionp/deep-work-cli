@@ -46,55 +46,18 @@ class DeepWorkCLI:
                 if not clean or "-------" in clean or line.startswith('  '):
                     continue
 
-                marker_match = re.match(r'^\[([x\->])\]', clean)
+                marker_match = re.match(r'^\[([x\->\s]?)\]', clean)
                 if marker_match:
                     state = marker_match.group(1)
                     content = clean[marker_match.end():].strip()
                     if content not in seen_tasks:
-                        counts[f'[{state}]'] += 1
+                        if state in ['x', '-', '>']:
+                            counts[f'[{state}]'] += 1
                         seen_tasks.add(content)
         return counts
 
-    def update_task_in_file(self, task_line_content, new_marker, target_file=None):
-        dest = target_file if target_file else FILENAME
-        if not os.path.exists(dest): return
-
-        with open(dest, 'r') as f:
-            lines = f.readlines()
-
-        new_lines = []
-        i = 0
-        while i < len(lines):
-            line = lines[i]
-            if not line.strip() or "-------" in line:
-                new_lines.append(line)
-                i += 1
-                continue
-
-            clean_line = re.sub(r'^\[[x\->\s]?\]\s*', '', line.strip())
-            if clean_line == task_line_content:
-                leading_spaces = line[:line.find(line.strip())]
-                new_lines.append(f"{leading_spaces}{new_marker} {task_line_content}\n")
-
-                i += 1
-                while i < len(lines) and (lines[i].startswith('  ') or not lines[i].strip()):
-                    if lines[i].strip():
-                        note_content = re.sub(r'^\[[x\->\s]?\]\s*', '', lines[i].strip())
-                        leading_note_spaces = lines[i][:lines[i].find(lines[i].strip())]
-                        new_lines.append(f"{leading_note_spaces}{new_marker} {note_content}\n")
-                    else:
-                        new_lines.append(lines[i])
-                    i += 1
-                continue
-            else:
-                new_lines.append(line)
-            i += 1
-
-        with open(dest, 'w') as f:
-            f.writelines(new_lines)
-
     def load_context(self):
-        """Whole-file aware parser. Authoritative version is the latest one."""
+        """Whole-file aware parser with resolution logic."""
         if not os.path.exists(FILENAME):
             with open(FILENAME, 'w') as f: f.write(f"Session Start - {get_timestamp()}\n")
             self.triage_stack = []
@@ -103,63 +66,71 @@ class DeepWorkCLI:
         with open(FILENAME, 'r') as f:
             lines = [l.rstrip() for l in f.readlines()]
 
-        all_entries = {} # content_key -> {line, notes, is_task, state, order}
-        order_counter = 0
+        active_entries = {} # content -> {notes, is_task}
+        entry_order = [] # list of contents
+        last_entry_content = None
         
-        i = 0
-        while i < len(lines):
-            line = lines[i]
+        for line in lines:
             if not line.strip() or "-------" in line:
-                i += 1
                 continue
             
             if not line.startswith('  '):
                 clean = line.strip()
                 marker_match = re.match(r'^\[([x\->\s]?)\]\s*', clean)
                 if marker_match:
-                    state = marker_match.group(1)
-                    content = clean[marker_match.end():]
+                    state = marker_match.group(1).strip()
+                    content = clean[marker_match.end():].strip()
+
+                    if not state:
+                        # Pending task
+                        notes = active_entries.pop(content, {}).get('notes', [])
+                        active_entries[content] = {'notes': notes, 'is_task': True}
+                        if content in entry_order: entry_order.remove(content)
+                        entry_order.append(content)
+                    else:
+                        # Resolution
+                        active_entries.pop(content, None)
+                        if content in entry_order: entry_order.remove(content)
+                    last_entry_content = content
                 else:
-                    state = ""
+                    # Non-task entry
                     content = clean
-
-                notes = []
-                i += 1
-                while i < len(lines) and (lines[i].startswith('  ') or not lines[i].strip()):
-                    if lines[i].strip():
-                        notes.append(lines[i].strip())
-                    i += 1
-
-                if content in all_entries:
-                    # Append new notes if not already there
-                    existing_notes = all_entries[content]['notes']
-                    for n in notes:
-                        if n not in existing_notes:
-                            existing_notes.append(n)
-                    # Latest state and order wins
-                    all_entries[content]['state'] = state
-                    all_entries[content]['order'] = order_counter
-                    if marker_match:
-                        all_entries[content]['is_task'] = True
-                        all_entries[content]['line'] = f"[] {content}"
-                else:
-                    all_entries[content] = {
-                        'line': f"[] {content}" if marker_match else content,
-                        'notes': notes,
-                        'is_task': bool(marker_match),
-                        'state': state,
-                        'order': order_counter
-                    }
-                order_counter += 1
+                    notes = active_entries.pop(content, {}).get('notes', [])
+                    active_entries[content] = {'notes': notes, 'is_task': False}
+                    if content in entry_order: entry_order.remove(content)
+                    entry_order.append(content)
+                    last_entry_content = content
             else:
-                i += 1
+                # Indented line
+                if last_entry_content and last_entry_content in active_entries:
+                    note = line.strip()
+                    notes_list = active_entries[last_entry_content]['notes']
 
-        sorted_entries = sorted(all_entries.values(), key=lambda x: x['order'])
+                    # Subtask/Note resolution logic
+                    sub_marker_match = re.match(r'^\[([x\->\s]?)\]\s*', note)
+                    if sub_marker_match:
+                        sub_content = note[sub_marker_match.end():].strip()
+                        # Remove any existing instance of this subtask content
+                        new_notes = []
+                        for n in notes_list:
+                            m = re.match(r'^\[[x\->\s]?\]\s*', n)
+                            if m and n[m.end():].strip() == sub_content:
+                                continue
+                            new_notes.append(n)
+                        notes_list = new_notes
+                        notes_list.append(note)
+                    else:
+                        if note in notes_list: notes_list.remove(note)
+                        notes_list.append(note)
+                    active_entries[last_entry_content]['notes'] = notes_list
+
         self.triage_stack = []
-        for e in sorted_entries:
-            if not e['is_task'] or e['state'] in ['', ' ']:
-                self.triage_stack.append({'line': e['line'], 'notes': e['notes']})
-
+        for content in entry_order:
+            entry = active_entries[content]
+            self.triage_stack.append({
+                'line': f"[] {content}" if entry['is_task'] else content,
+                'notes': entry['notes']
+            })
         self.ignored_indices = set()
 
     def commit_to_ledger(self, mode_label, items, target_file=None):
@@ -287,19 +258,12 @@ class DeepWorkCLI:
                 match_x = re.match(r'^x(\d+)', cmd)
                 if match_x:
                     idx = int(match_x.group(1))
-                    subtask_content = re.sub(r'^\[[x\->\s]?\]\s*', '', task['notes'][idx])
                     task['notes'][idx] = re.sub(r'^\[\s?\]', '[x]', task['notes'][idx])
-                    self.update_task_in_file(subtask_content, "[x]")
                     return
 
                 if base_cmd in ['x', '-', '>']:
                     marker = {'x': '[x]', '-': '[-]', '>': '[>]'}[base_cmd]
                     task_content = re.sub(r'^\[[x\->\s]?\]\s*', '', task['line'])
-
-                    self.update_task_in_file(task_content, marker)
-                    for n in task['notes']:
-                        n_content = re.sub(r'^\[[x\->\s]?\]\s*', '', n)
-                        self.update_task_in_file(n_content, marker)
 
                     if base_cmd == '>':
                         tomorrow = get_tomorrow_file()

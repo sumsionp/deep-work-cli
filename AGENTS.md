@@ -2,7 +2,7 @@
 
 ## Core Philosophy: The Ledger
 This program is a "lens" for a chronological journal. 
-- **Rule 1:** Append, don't edit. We preserve history. (Exception: When a task is completed, cancelled, or deferred, all previous instances of that task's marker in the file should be updated to match the new state).
+- **Rule 1:** Append, don't edit. We preserve history.
 - **Rule 2:** Use Markers (e.g., `------- Triage Session -------`) to denote blocks of time.
 - **Rule 3:** The "Free Write" is always the section after the very last marker in the file.
 
