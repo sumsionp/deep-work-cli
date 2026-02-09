@@ -209,17 +209,21 @@ class DeepWorkCLI:
             header = " !!! FOCUS LIMIT EXCEEDED !!! "
 
         t = self.triage_stack[0]
+        is_task = t['line'].startswith('[]')
         print(color + "="*65 + "\033[0m")
         print(f"{color}{header}\033[0m | Time: {m:02d}:{s:02d}")
         print(color + "="*65 + "\033[0m")
         
         display_line = re.sub(r'^\[\s?\]\s*', '', t['line'])
-        print(f"\n\033[1;32mFOCUS >> {display_line}\033[0m")
+        if is_task:
+            print(f"\n\033[1;32mFOCUS >> {display_line}\033[0m")
+        else:
+            print(f"\n\033[1;32mFOCUS >> \033[0m{display_line}")
         for i, n in enumerate(t['notes']):
             n_color = "\033[1;36m" if '[]' in n else ""
             print(f"  {i}: {n_color}{n}\033[0m")
         print("\n" + color + "-"*65 + "\033[0m")
-        print("Cmds: [x] done, [x#] subtask, [-] cancel, [>] defer, [t] triage, [q] quit")
+        print("Cmds: [x] done, [x#] subtask, [-] cancel, [>] defer, [n] add, [i] ignore, [t] triage, [q] quit")
 
     def handle_command(self, cmd):
         try:
@@ -257,7 +261,14 @@ class DeepWorkCLI:
                     self.mode = "WORK"; self.last_msg = ""
                     self.initial_stack = copy.deepcopy(self.triage_stack)
                 elif base_cmd == 'i':
-                    idx = int(parts[1])
+                    if len(parts) > 1:
+                        idx = int(parts[1])
+                    elif len(self.triage_stack) == 1:
+                        idx = 0
+                    else:
+                        # Fallback to existing behavior if multiple items but no index
+                        idx = int(parts[1])
+
                     item = self.triage_stack.pop(idx)
                     if item['line'].startswith('[]'):
                         # It's a task, mark as cancelled
@@ -281,18 +292,61 @@ class DeepWorkCLI:
                     self.triage_stack[dest_idx]['notes'].append(item)
 
             elif self.mode == "WORK":
+                if not self.triage_stack:
+                    if base_cmd == 'n' or base_cmd == 'q':
+                        return "QUIT"
+                    return
+
                 task = self.triage_stack[0]
+                is_note = not task['line'].startswith('[]')
+
+                if base_cmd == 'n':
+                    line = input("Enter note or task: ")
+                    if not line.strip(): return
+
+                    if line.startswith(' '):
+                        # Sub-item
+                        content = line.strip()
+                        task['notes'].append(content)
+                        self.commit_to_ledger("New Entry", [task])
+                    else:
+                        # Top-level
+                        clean = line.strip()
+                        marker_match = re.match(r'^\[([x\->\s]?)\]\s*', clean)
+                        is_new_task = False
+                        if marker_match:
+                            state = marker_match.group(1).strip()
+                            if not state:
+                                is_new_task = True
+                                content = clean[marker_match.end():].strip()
+
+                        if is_new_task:
+                            item = {'line': f"[] {content}", 'notes': []}
+                        else:
+                            item = {'line': clean, 'notes': []}
+
+                        self.commit_to_ledger("New Entry", [item])
+                        self.triage_stack.append(item)
+                    return
+
                 match_x = re.match(r'^x(\d+)', cmd)
                 if match_x:
                     idx = int(match_x.group(1))
                     task['notes'][idx] = re.sub(r'^\[\s?\]', '[x]', task['notes'][idx])
                     return
 
-                if base_cmd in ['x', '-', '>']:
-                    marker = {'x': '[x]', '-': '[-]', '>': '[>]'}[base_cmd]
+                if is_note and base_cmd in ['x', '-', 'i']:
+                    self.triage_stack.pop(0)
+                    self.task_start_time = None
+                    self.initial_stack = copy.deepcopy(self.triage_stack)
+                    return
+
+                if base_cmd in ['x', '-', '>', 'i']:
+                    effective_cmd = '-' if base_cmd == 'i' else base_cmd
+                    marker = {'x': '[x]', '-': '[-]', '>': '[>]'}[effective_cmd]
                     task_content = re.sub(r'^\[[x\->\s]?\]\s*', '', task['line'])
 
-                    if base_cmd == '>':
+                    if effective_cmd == '>':
                         tomorrow = get_tomorrow_file()
                         clean_task = copy.deepcopy(task)
                         clean_task['line'] = f"[] {task_content}"
