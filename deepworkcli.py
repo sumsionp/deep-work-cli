@@ -209,12 +209,14 @@ class DeepWorkCLI:
             header = " !!! FOCUS LIMIT EXCEEDED !!! "
 
         t = self.triage_stack[0]
+        is_task = t['line'].startswith('[]')
         print(color + "="*65 + "\033[0m")
         print(f"{color}{header}\033[0m | Time: {m:02d}:{s:02d}")
         print(color + "="*65 + "\033[0m")
         
         display_line = re.sub(r'^\[\s?\]\s*', '', t['line'])
-        print(f"\n\033[1;32mFOCUS >> {display_line}\033[0m")
+        focus_color = "\033[1;32m" if is_task else ""
+        print(f"\n{focus_color}FOCUS >> {display_line}\033[0m")
         for i, n in enumerate(t['notes']):
             n_color = "\033[1;36m" if '[]' in n else ""
             print(f"  {i}: {n_color}{n}\033[0m")
@@ -257,7 +259,14 @@ class DeepWorkCLI:
                     self.mode = "WORK"; self.last_msg = ""
                     self.initial_stack = copy.deepcopy(self.triage_stack)
                 elif base_cmd == 'i':
-                    idx = int(parts[1])
+                    if len(parts) > 1:
+                        idx = int(parts[1])
+                    elif len(self.triage_stack) == 1:
+                        idx = 0
+                    else:
+                        # Fallback to existing behavior if multiple items but no index
+                        idx = int(parts[1])
+
                     item = self.triage_stack.pop(idx)
                     if item['line'].startswith('[]'):
                         # It's a task, mark as cancelled
