@@ -307,8 +307,10 @@ class DeepWorkCLI:
                     if line.startswith(' '):
                         # Sub-item
                         content = line.strip()
+                        is_subtask = bool(re.match(r'^\[\s?\]', content))
                         task['notes'].append(content)
                         self.commit_to_ledger("New Entry", [task])
+                        self.last_msg = "Subtask Added" if is_subtask else "Subnote Added"
                     else:
                         # Top-level
                         clean = line.strip()
@@ -322,8 +324,10 @@ class DeepWorkCLI:
 
                         if is_new_task:
                             item = {'line': f"[] {content}", 'notes': []}
+                            self.last_msg = "Task Added"
                         else:
                             item = {'line': clean, 'notes': []}
+                            self.last_msg = "Note Added"
 
                         self.commit_to_ledger("New Entry", [item])
                         self.triage_stack.append(item)
