@@ -215,8 +215,10 @@ class DeepWorkCLI:
         print(color + "="*65 + "\033[0m")
         
         display_line = re.sub(r'^\[\s?\]\s*', '', t['line'])
-        focus_color = "\033[1;32m" if is_task else ""
-        print(f"\n{focus_color}FOCUS >> {display_line}\033[0m")
+        if is_task:
+            print(f"\n\033[1;32mFOCUS >> {display_line}\033[0m")
+        else:
+            print(f"\n\033[1;32mFOCUS >> \033[0m{display_line}")
         for i, n in enumerate(t['notes']):
             n_color = "\033[1;36m" if '[]' in n else ""
             print(f"  {i}: {n_color}{n}\033[0m")
