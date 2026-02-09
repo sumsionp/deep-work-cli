@@ -30,7 +30,6 @@ class DeepWorkCLI:
         self.mode = "TRIAGE"
         self.triage_stack = []
         self.initial_stack = []
-        self.ignored_indices = set()
         self.last_msg = "DeepWorkCLI Ready."
         self.task_start_time = None
 
@@ -71,6 +70,17 @@ class DeepWorkCLI:
         last_entry_content = None
         
         for line in lines:
+            if "------- Triage" in line:
+                new_entry_order = []
+                for content in entry_order:
+                    if active_entries[content]['is_task']:
+                        new_entry_order.append(content)
+                    else:
+                        del active_entries[content]
+                entry_order = new_entry_order
+                last_entry_content = None
+                continue
+
             if not line.strip() or "-------" in line:
                 continue
             
@@ -131,7 +141,6 @@ class DeepWorkCLI:
                 'line': f"[] {content}" if entry['is_task'] else content,
                 'notes': entry['notes']
             })
-        self.ignored_indices = set()
 
     def commit_to_ledger(self, mode_label, items, target_file=None):
         dest = target_file if target_file else FILENAME
@@ -172,7 +181,6 @@ class DeepWorkCLI:
         print(f"--- TRIAGE: {os.path.basename(FILENAME)} ---")
         visible_count = 0
         for i, t in enumerate(self.triage_stack):
-            if i in self.ignored_indices: continue
             color = "\033[1;36m" if '[]' in t['line'] else ""
             print(f"{i}: {color}{t['line']}\033[0m")
             for j, n in enumerate(t['notes']):
@@ -221,7 +229,7 @@ class DeepWorkCLI:
             base_cmd = parts[0]
             
             if base_cmd == 'q':
-                active = [t for i, t in enumerate(self.triage_stack) if i not in self.ignored_indices]
+                active = self.triage_stack
                 if active:
                     print(f"\n\033[1;33m[!] Session Interrupted.\033[0m")
                     if input("Rescue remaining tasks to Free Write? (y/n): ").lower() == 'y':
@@ -242,14 +250,28 @@ class DeepWorkCLI:
 
             if self.mode == "TRIAGE":
                 if base_cmd == 'w':
-                    active = [t for i, t in enumerate(self.triage_stack) if i not in self.ignored_indices]
+                    active = self.triage_stack
                     items_to_write = active if active != self.initial_stack else []
                     self.commit_to_ledger("Triage", items_to_write)
                     self.triage_stack = active
                     self.mode = "WORK"; self.last_msg = ""
                     self.initial_stack = copy.deepcopy(self.triage_stack)
                 elif base_cmd == 'i':
-                    self.ignored_indices.add(int(parts[1]))
+                    idx = int(parts[1])
+                    item = self.triage_stack.pop(idx)
+                    if item['line'].startswith('[]'):
+                        # It's a task, mark as cancelled
+                        task_content = re.sub(r'^\[\s?\]\s*', '', item['line'])
+                        item['line'] = f"[-] {task_content}"
+                        new_notes = []
+                        for n in item['notes']:
+                            if re.match(r'^\[[x>]\]', n):
+                                new_notes.append(n)
+                            else:
+                                clean_note = re.sub(r'^\[[\s\-]?\]\s*', '', n)
+                                new_notes.append(f"[-] {clean_note}")
+                        item['notes'] = new_notes
+                        self.commit_to_ledger("Cancelled", [item])
                 elif base_cmd == 'p':
                     src, dest = int(parts[1]), int(parts[2]) if len(parts) > 2 else 0
                     self.triage_stack.insert(dest, self.triage_stack.pop(src))
