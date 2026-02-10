@@ -52,6 +52,7 @@ class DeepWorkCLI:
         self.initial_stack = []
         self.last_msg = "DeepWorkCLI Ready."
         self.task_start_time = None
+        self.focus_start_time = None
         self.break_start_time = None
         self.break_duration = 0
         self.break_quote = ""
@@ -246,19 +247,26 @@ class DeepWorkCLI:
     def update_timer_ui(self):
         """Minimal redraw of just the header to preserve terminal selection."""
         sys.stdout.write("\033[s") # Save cursor
+        now = time.time()
         if self.mode == "WORK":
             if not self.triage_stack: return
-            if self.task_start_time is None: self.task_start_time = time.time()
-            elapsed = int(time.time() - self.task_start_time)
-            m, s = divmod(elapsed, 60)
+            if self.task_start_time is None: self.task_start_time = now
+            if self.focus_start_time is None: self.focus_start_time = now
+
+            task_elapsed = int(now - self.task_start_time)
+            tm, ts = divmod(task_elapsed, 60)
+
+            focus_elapsed = int(now - self.focus_start_time)
+            fm, fs = divmod(focus_elapsed, 60)
+
             color = "\033[1;34m"
             header = " DEEP WORK SESSION "
-            if elapsed > ALERT_THRESHOLD:
+            if focus_elapsed > ALERT_THRESHOLD:
                 color = "\033[1;31;7m"
                 header = " !!! FOCUS LIMIT EXCEEDED !!! "
 
             sys.stdout.write("\033[1;1H" + f"{color}{'='*65}\033[0m")
-            sys.stdout.write("\033[2;1H" + f"{color}{header}\033[0m | Time: {m:02d}:{s:02d}")
+            sys.stdout.write("\033[2;1H" + f"{color}{header}\033[0m | Task: {tm:02d}:{ts:02d} | Focus: {fm:02d}:{fs:02d}")
             sys.stdout.write("\033[3;1H" + f"{color}{'='*65}\033[0m")
         elif self.mode == "BREAK":
             elapsed_break = time.time() - self.break_start_time
@@ -306,9 +314,9 @@ class DeepWorkCLI:
                     is_expired = (elapsed_break >= self.break_duration * 60)
 
                 is_exceeded = False
-                if self.mode == "WORK" and self.task_start_time:
-                    elapsed = now - self.task_start_time
-                    is_exceeded = (elapsed > ALERT_THRESHOLD)
+                if self.mode == "WORK" and self.focus_start_time:
+                    focus_elapsed = now - self.focus_start_time
+                    is_exceeded = (focus_elapsed > ALERT_THRESHOLD)
 
                 structural_change = (
                     buffer != last_buffer or
@@ -400,20 +408,26 @@ class DeepWorkCLI:
             print("\n\033[1;32m[FLOW COMPLETE]\033[0m Press 'q' to return to vi.")
             return
         
-        if self.task_start_time is None: self.task_start_time = time.time()
-        elapsed = int(time.time() - self.task_start_time)
-        m, s = divmod(elapsed, 60)
+        now = time.time()
+        if self.task_start_time is None: self.task_start_time = now
+        if self.focus_start_time is None: self.focus_start_time = now
+
+        task_elapsed = int(now - self.task_start_time)
+        tm, ts = divmod(task_elapsed, 60)
+
+        focus_elapsed = int(now - self.focus_start_time)
+        fm, fs = divmod(focus_elapsed, 60)
         
         color = "\033[1;34m"
         header = " DEEP WORK SESSION "
-        if elapsed > ALERT_THRESHOLD:
+        if focus_elapsed > ALERT_THRESHOLD:
             color = "\033[1;31;7m"
             header = " !!! FOCUS LIMIT EXCEEDED !!! "
 
         t = self.triage_stack[0]
         is_task = t['line'].startswith('[]')
         print(color + "="*65 + "\033[0m")
-        print(f"{color}{header}\033[0m | Time: {m:02d}:{s:02d}")
+        print(f"{color}{header}\033[0m | Task: {tm:02d}:{ts:02d} | Focus: {fm:02d}:{fs:02d}")
         print(color + "="*65 + "\033[0m")
         
         display_line = re.sub(r'^\[\s?\]\s*', '', t['line'])
@@ -457,9 +471,11 @@ class DeepWorkCLI:
 
             if self.mode == "BREAK":
                 if base_cmd == 'w':
-                    break_total_time = time.time() - self.break_start_time
+                    now = time.time()
+                    break_total_time = now - self.break_start_time
                     if self.task_start_time:
                         self.task_start_time += break_total_time
+                    self.focus_start_time = now
                     self.mode = "WORK"
                     self.commit_to_ledger("Work Session Re-started at", [])
                     self.last_msg = "Work Resumed"
