@@ -4,6 +4,10 @@ import re
 import time
 import logging
 import copy
+import random
+import select
+import termios
+import tty
 from datetime import datetime, timedelta
 
 # --- CONFIG ---
@@ -11,6 +15,19 @@ DATE_FORMAT = '%Y%m%d'
 FILENAME = sys.argv[1] if len(sys.argv) > 1 else datetime.now().strftime(f'{DATE_FORMAT}-notes.txt')
 LOG_FILE = "deepwork_activity.log"
 ALERT_THRESHOLD = 90 * 60 
+
+BREAK_QUOTES = [
+    "The time to relax is when you don't have time for it. – Sydney J. Harris",
+    "Taking a break can lead to breakthroughs. – Unknown",
+    "Rest is not idleness, and to lie sometimes on the grass under trees... is by no means a waste of time. – John Lubbock",
+    "Sometimes the most productive thing you can do is relax. – Mark Black",
+    "Almost everything will work again if you unplug it for a few minutes, including you. – Anne Lamott",
+    "A break from everything is much needed once in a while. – Unknown",
+    "Reflection is one of the most underused yet powerful tools for success. – Richard Carlson",
+    "Disconnect to reconnect. – Unknown",
+    "Your mind will answer most questions if you learn to relax and wait for the answer. – William S. Burroughs",
+    "Pause. Breathe. Rest. Start again. – Unknown"
+]
 
 logging.basicConfig(
     filename=LOG_FILE,
@@ -32,6 +49,10 @@ class DeepWorkCLI:
         self.initial_stack = []
         self.last_msg = "DeepWorkCLI Ready."
         self.task_start_time = None
+        self.break_start_time = None
+        self.break_duration = 0
+        self.break_quote = ""
+        self.last_chime_timestamp = 0
 
     def get_daily_summary(self):
         counts = {'[x]': 0, '[-]': 0, '[>]': 0}
@@ -152,30 +173,100 @@ class DeepWorkCLI:
                     for n in t['notes']:
                         f.write(f"  {n}\n")
 
+    def check_chime(self):
+        if self.mode != "BREAK": return
+
+        now = time.time()
+        elapsed_break = now - self.break_start_time
+        remaining = self.break_duration * 60 - elapsed_break
+
+        if remaining <= 0:
+            if now - self.last_chime_timestamp >= 60:
+                sys.stdout.write('\a')
+                sys.stdout.flush()
+                self.last_chime_timestamp = now
+
+    def render_break(self):
+        elapsed_break = time.time() - self.break_start_time
+        remaining = int(self.break_duration * 60 - elapsed_break)
+
+        sign = ""
+        if remaining < 0:
+            sign = "-"
+            abs_rem = abs(remaining)
+        else:
+            abs_rem = remaining
+
+        m, s = divmod(abs_rem, 60)
+        time_str = f"{sign}{m:02d}:{s:02d}"
+
+        color = "\033[1;34m"
+        header = " BREAK SESSION "
+
+        print(color + "="*65 + "\033[0m")
+        print(f"{color}{header}\033[0m | Remaining: {time_str}")
+        print(color + "="*65 + "\033[0m")
+
+        print(f"\n\033[1;32mFOCUS >> \033[0m{self.break_quote}")
+
+        print("\n" + color + "-"*65 + "\033[0m")
+        print("Cmds: [n] add, [t] triage, [w] work, [q] quit")
+
     def run(self):
         self.load_context()
         self.initial_stack = copy.deepcopy(self.triage_stack)
-        while True:
-            os.system('clear')
-            if self.mode == "TRIAGE":
-                self.render_triage()
-            else:
-                self.render_work()
 
-            print(f"\n\033[90mStatus: {self.last_msg}\033[0m")
-            cmd = input("\033[1;37m>> \033[0m").strip().lower()
-            
-            result = self.handle_command(cmd)
-            if result == "QUIT":
-                summary = self.get_daily_summary()
-                print("\n" + "="*35)
-                print(f"\033[1;32mDAILY SCORECARD ({os.path.basename(FILENAME)})\033[0m")
-                print(f"  Finished  [x]: {summary['[x]']}")
-                print(f"  Cancelled [-]: {summary['[-]']}")
-                print(f"  Deferred  [>]: {summary['[>]']}")
-                print("="*35)
-                input("\nTake a break. Press Enter to return to Free Write...")
-                break
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        try:
+            tty.setcbreak(fd)
+            buffer = ""
+            while True:
+                os.system('clear')
+                if self.mode == "TRIAGE":
+                    self.render_triage()
+                elif self.mode == "WORK":
+                    self.render_work()
+                elif self.mode == "BREAK":
+                    self.render_break()
+
+                print(f"\n\033[90mStatus: {self.last_msg}\033[0m")
+                sys.stdout.write(f"\033[1;37m>> \033[0m{buffer}")
+                sys.stdout.flush()
+
+                if self.mode == "BREAK":
+                    self.check_chime()
+
+                rlist, _, _ = select.select([sys.stdin], [], [], 0.1)
+                if rlist:
+                    char = sys.stdin.read(1)
+                    if char == '\n' or char == '\r':
+                        cmd = buffer.strip().lower()
+                        buffer = ""
+                        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                        print()
+                        result = self.handle_command(cmd)
+                        if result == "QUIT":
+                            summary = self.get_daily_summary()
+                            print("\n" + "="*35)
+                            print(f"\033[1;32mDAILY SCORECARD ({os.path.basename(FILENAME)})\033[0m")
+                            print(f"  Finished  [x]: {summary['[x]']}")
+                            print(f"  Cancelled [-]: {summary['[-]']}")
+                            print(f"  Deferred  [>]: {summary['[>]']}")
+                            print("="*35)
+                            input("\nTake a break. Press Enter to return to Free Write...")
+                            break
+                        tty.setcbreak(fd)
+                    elif char in ['\x7f', '\x08']:
+                        buffer = buffer[:-1]
+                    elif ord(char) == 3: # Ctrl+C
+                        raise KeyboardInterrupt
+                    else:
+                        buffer += char
+        except KeyboardInterrupt:
+            pass
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
     def render_triage(self):
         print(f"--- TRIAGE: {os.path.basename(FILENAME)} ---")
@@ -241,7 +332,7 @@ class DeepWorkCLI:
                     else:
                         self.commit_to_ledger("Interrupted", [])
                 else:
-                    if self.mode == "WORK":
+                    if self.mode in ["WORK", "BREAK"]:
                         print(f"\n\033[1;32m[+] Work Session Complete.\033[0m")
                         self.commit_to_ledger("Work Session Complete", [])
                     else:
@@ -250,7 +341,29 @@ class DeepWorkCLI:
 
             if base_cmd == 't': 
                 self.mode = "TRIAGE"; self.task_start_time = None
+                self.break_start_time = None
                 return
+
+            if self.mode == "BREAK":
+                if base_cmd == 'w':
+                    break_total_time = time.time() - self.break_start_time
+                    if self.task_start_time:
+                        self.task_start_time += break_total_time
+                    self.mode = "WORK"
+                    self.commit_to_ledger("Work Session Re-started at", [])
+                    self.last_msg = "Work Resumed"
+                    return
+                elif base_cmd == 'b':
+                    self.last_msg = "Break time overload! Doing nothing."
+                    self.break_quote = random.choice(BREAK_QUOTES)
+                    return
+                elif base_cmd == 'n':
+                    pass # Handled by shared WORK/BREAK logic
+                elif base_cmd in ['t', 'q']:
+                    pass # Handled by common logic
+                else:
+                    self.last_msg = "Command disabled during break."
+                    return
 
             if self.mode == "TRIAGE":
                 if base_cmd == 'w':
@@ -291,7 +404,7 @@ class DeepWorkCLI:
                     item = self.triage_stack[int(src_str.split('.')[0])]['notes'].pop(int(src_str.split('.')[1])) if '.' in src_str else self.triage_stack.pop(int(src_str))['line']
                     self.triage_stack[dest_idx]['notes'].append(item)
 
-            elif self.mode == "WORK":
+            elif self.mode in ["WORK", "BREAK"]:
                 if not self.triage_stack:
                     if base_cmd == 'n' or base_cmd == 'q':
                         return "QUIT"
@@ -299,6 +412,27 @@ class DeepWorkCLI:
 
                 task = self.triage_stack[0]
                 is_note = not task['line'].startswith('[]')
+
+                if base_cmd == 'b' and self.mode == "WORK":
+                    duration = 5
+                    if len(parts) > 1:
+                        try:
+                            duration = int(parts[1])
+                        except ValueError:
+                            self.last_msg = f"Invalid break duration: {parts[1]}"
+                            return
+
+                    if duration <= 0:
+                        self.last_msg = "Seriously? Take a real break! 0 minutes is too short."
+                        return
+
+                    self.mode = "BREAK"
+                    self.break_duration = duration
+                    self.break_start_time = time.time()
+                    self.break_quote = random.choice(BREAK_QUOTES)
+                    self.last_chime_timestamp = 0
+                    self.commit_to_ledger(f"Break for {duration} at", [])
+                    return
 
                 if base_cmd == 'n':
                     line = input("Enter note or task: ")
@@ -335,17 +469,26 @@ class DeepWorkCLI:
 
                 match_x = re.match(r'^x(\d+)', cmd)
                 if match_x:
+                    if self.mode == "BREAK":
+                        self.last_msg = "Command disabled during break."
+                        return
                     idx = int(match_x.group(1))
                     task['notes'][idx] = re.sub(r'^\[\s?\]', '[x]', task['notes'][idx])
                     return
 
                 if is_note and base_cmd in ['x', '-', 'i']:
+                    if self.mode == "BREAK":
+                        self.last_msg = "Command disabled during break."
+                        return
                     self.triage_stack.pop(0)
                     self.task_start_time = None
                     self.initial_stack = copy.deepcopy(self.triage_stack)
                     return
 
                 if base_cmd in ['x', '-', '>', 'i']:
+                    if self.mode == "BREAK":
+                        self.last_msg = "Command disabled during break."
+                        return
                     effective_cmd = '-' if base_cmd == 'i' else base_cmd
                     marker = {'x': '[x]', '-': '[-]', '>': '[>]'}[effective_cmd]
                     task_content = re.sub(r'^\[[x\->\s]?\]\s*', '', task['line'])
