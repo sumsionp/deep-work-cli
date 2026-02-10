@@ -8,6 +8,7 @@ import random
 import select
 import termios
 import tty
+import subprocess
 from datetime import datetime, timedelta
 
 # --- CONFIG ---
@@ -15,6 +16,7 @@ DATE_FORMAT = '%Y%m%d'
 FILENAME = sys.argv[1] if len(sys.argv) > 1 else datetime.now().strftime(f'{DATE_FORMAT}-notes.txt')
 LOG_FILE = "deepwork_activity.log"
 ALERT_THRESHOLD = 90 * 60 
+CHIME_COMMAND = None # Set to a command string like "play /path/to/sound.wav" to override
 
 BREAK_QUOTES = [
     "The time to relax is when you don't have time for it. – Sydney J. Harris",
@@ -173,6 +175,31 @@ class DeepWorkCLI:
                     for n in t['notes']:
                         f.write(f"  {n}\n")
 
+    def play_chime(self):
+        if CHIME_COMMAND:
+            subprocess.Popen(CHIME_COMMAND.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return
+
+        # Fallback chain
+        commands = [
+            ["paplay", "/usr/share/sounds/freedesktop/stereo/complete.oga"],
+            ["play", "/usr/share/sounds/freedesktop/stereo/complete.oga"],
+            ["osascript", "-e", "beep"]
+        ]
+
+        for cmd in commands:
+            try:
+                # Check if command exists
+                if subprocess.call(["which", cmd[0]], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) == 0:
+                    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    return
+            except Exception:
+                continue
+
+        # Final fallback to terminal bell
+        sys.stdout.write('\a')
+        sys.stdout.flush()
+
     def check_chime(self):
         if self.mode != "BREAK": return
 
@@ -182,11 +209,7 @@ class DeepWorkCLI:
 
         if remaining <= 0:
             if now - self.last_chime_timestamp >= 60:
-                sys.stdout.write('\a')
-                sys.stdout.flush()
-                # Also try stderr as a fallback
-                sys.stderr.write('\a')
-                sys.stderr.flush()
+                self.play_chime()
                 self.last_chime_timestamp = now
                 self.last_msg = "!!! BREAK EXPIRED !!!"
 
