@@ -184,7 +184,11 @@ class DeepWorkCLI:
             if now - self.last_chime_timestamp >= 60:
                 sys.stdout.write('\a')
                 sys.stdout.flush()
+                # Also try stderr as a fallback
+                sys.stderr.write('\a')
+                sys.stderr.flush()
                 self.last_chime_timestamp = now
+                self.last_msg = "!!! BREAK EXPIRED !!!"
 
     def render_break(self):
         elapsed_break = time.time() - self.break_start_time
@@ -202,6 +206,9 @@ class DeepWorkCLI:
 
         color = "\033[1;34m"
         header = " BREAK SESSION "
+        if remaining <= 0:
+            color = "\033[1;31;7m"
+            header = " !!! BREAK EXPIRED !!! "
 
         print(color + "="*65 + "\033[0m")
         print(f"{color}{header}\033[0m | Remaining: {time_str}")
@@ -221,18 +228,36 @@ class DeepWorkCLI:
         try:
             tty.setcbreak(fd)
             buffer = ""
-            while True:
-                os.system('clear')
-                if self.mode == "TRIAGE":
-                    self.render_triage()
-                elif self.mode == "WORK":
-                    self.render_work()
-                elif self.mode == "BREAK":
-                    self.render_break()
+            last_render_second = -1
+            last_buffer = None
+            last_mode = None
+            last_msg = None
 
-                print(f"\n\033[90mStatus: {self.last_msg}\033[0m")
-                sys.stdout.write(f"\033[1;37m>> \033[0m{buffer}")
-                sys.stdout.flush()
+            while True:
+                current_second = int(time.time())
+
+                # Redraw if time changed, buffer changed, mode changed, or message changed
+                if (current_second != last_render_second or
+                    buffer != last_buffer or
+                    self.mode != last_mode or
+                    self.last_msg != last_msg):
+
+                    sys.stdout.write("\033[H\033[2J")
+                    if self.mode == "TRIAGE":
+                        self.render_triage()
+                    elif self.mode == "WORK":
+                        self.render_work()
+                    elif self.mode == "BREAK":
+                        self.render_break()
+
+                    print(f"\n\033[90mStatus: {self.last_msg}\033[0m")
+                    sys.stdout.write(f"\033[1;37m>> \033[0m{buffer}")
+                    sys.stdout.flush()
+
+                    last_render_second = current_second
+                    last_buffer = buffer
+                    last_mode = self.mode
+                    last_msg = self.last_msg
 
                 if self.mode == "BREAK":
                     self.check_chime()
