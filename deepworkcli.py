@@ -9,6 +9,7 @@ import select
 import termios
 import tty
 import subprocess
+import shlex
 from datetime import datetime, timedelta
 
 # --- CONFIG ---
@@ -177,7 +178,7 @@ class DeepWorkCLI:
 
     def play_chime(self):
         if CHIME_COMMAND:
-            subprocess.Popen(CHIME_COMMAND.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.Popen(shlex.split(CHIME_COMMAND), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return
 
         # Fallback chain
@@ -242,6 +243,41 @@ class DeepWorkCLI:
         print("\n" + color + "-"*65 + "\033[0m")
         print("Cmds: [n] add, [t] triage, [w] work, [q] quit")
 
+    def update_timer_ui(self):
+        """Minimal redraw of just the header to preserve terminal selection."""
+        sys.stdout.write("\033[s") # Save cursor
+        if self.mode == "WORK":
+            if not self.triage_stack: return
+            if self.task_start_time is None: self.task_start_time = time.time()
+            elapsed = int(time.time() - self.task_start_time)
+            m, s = divmod(elapsed, 60)
+            color = "\033[1;34m"
+            header = " DEEP WORK SESSION "
+            if elapsed > ALERT_THRESHOLD:
+                color = "\033[1;31;7m"
+                header = " !!! FOCUS LIMIT EXCEEDED !!! "
+
+            sys.stdout.write("\033[1;1H" + f"{color}{'='*65}\033[0m")
+            sys.stdout.write("\033[2;1H" + f"{color}{header}\033[0m | Time: {m:02d}:{s:02d}")
+            sys.stdout.write("\033[3;1H" + f"{color}{'='*65}\033[0m")
+        elif self.mode == "BREAK":
+            elapsed_break = time.time() - self.break_start_time
+            remaining = int(self.break_duration * 60 - elapsed_break)
+            sign = "-" if remaining < 0 else ""
+            m, s = divmod(abs(remaining), 60)
+            color = "\033[1;34m"
+            header = " BREAK SESSION "
+            if remaining <= 0:
+                color = "\033[1;31;7m"
+                header = " !!! BREAK EXPIRED !!! "
+
+            sys.stdout.write("\033[1;1H" + f"{color}{'='*65}\033[0m")
+            sys.stdout.write("\033[2;1H" + f"{color}{header}\033[0m | Remaining: {sign}{m:02d}:{s:02d}")
+            sys.stdout.write("\033[3;1H" + f"{color}{'='*65}\033[0m")
+
+        sys.stdout.write("\033[u") # Restore cursor
+        sys.stdout.flush()
+
     def run(self):
         self.load_context()
         self.initial_stack = copy.deepcopy(self.triage_stack)
@@ -255,17 +291,36 @@ class DeepWorkCLI:
             last_buffer = None
             last_mode = None
             last_msg = None
+            last_task = None
+            last_expired = False
+            last_exceeded = False
 
             while True:
-                current_second = int(time.time())
+                now = time.time()
+                current_second = int(now)
+                current_task = self.triage_stack[0] if self.triage_stack else None
 
-                # Redraw if time changed, buffer changed, mode changed, or message changed
-                if (current_second != last_render_second or
+                is_expired = False
+                if self.mode == "BREAK":
+                    elapsed_break = now - self.break_start_time
+                    is_expired = (elapsed_break >= self.break_duration * 60)
+
+                is_exceeded = False
+                if self.mode == "WORK" and self.task_start_time:
+                    elapsed = now - self.task_start_time
+                    is_exceeded = (elapsed > ALERT_THRESHOLD)
+
+                structural_change = (
                     buffer != last_buffer or
                     self.mode != last_mode or
-                    self.last_msg != last_msg):
+                    self.last_msg != last_msg or
+                    current_task != last_task or
+                    is_expired != last_expired or
+                    is_exceeded != last_exceeded
+                )
 
-                    sys.stdout.write("\033[H\033[2J")
+                if structural_change:
+                    sys.stdout.write("\033[H\033[J")
                     if self.mode == "TRIAGE":
                         self.render_triage()
                     elif self.mode == "WORK":
@@ -281,6 +336,14 @@ class DeepWorkCLI:
                     last_buffer = buffer
                     last_mode = self.mode
                     last_msg = self.last_msg
+                    last_task = copy.deepcopy(current_task)
+                    last_expired = is_expired
+                    last_exceeded = is_exceeded
+
+                elif current_second != last_render_second:
+                    if self.mode in ["WORK", "BREAK"]:
+                        self.update_timer_ui()
+                    last_render_second = current_second
 
                 if self.mode == "BREAK":
                     self.check_chime()
