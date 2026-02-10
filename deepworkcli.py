@@ -38,7 +38,7 @@ logging.basicConfig(
 )
 
 def get_timestamp():
-    return datetime.now().strftime('%I:%M %p')
+    return datetime.now().strftime('%m/%d/%Y %I:%M:%S %p')
 
 def get_tomorrow_file():
     tomorrow = datetime.now() + timedelta(days=1)
