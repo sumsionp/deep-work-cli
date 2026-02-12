@@ -450,7 +450,7 @@ class DeepWorkCLI:
             n_color = "\033[1;36m" if '[]' in n else ""
             print(f"  {i}: {n_color}{n}\033[0m")
         print("\n" + color + "-"*65 + "\033[0m")
-        print("Cmds: [x] done, [x#] subtask, [-] cancel, [>] defer, [n] add, [i] ignore, [t] triage, [q] quit")
+        print("Cmds: [x] done, [x#] subtask, [-] cancel, [>] defer, [f#] focus, [n] add, [i] ignore, [t] triage, [q] quit")
 
     def handle_command(self, cmd):
         try:
