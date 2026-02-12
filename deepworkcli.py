@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 DATE_FORMAT = '%Y%m%d'
 FILENAME = sys.argv[1] if len(sys.argv) > 1 else datetime.now().strftime(f'{DATE_FORMAT}-notes.txt')
 LOG_FILE = "deepwork_activity.log"
-ALERT_THRESHOLD = 90 * 60 
+ALERT_THRESHOLD = 25 * 60
 CHIME_COMMAND = None # Set to a command string like "play /path/to/sound.wav" to override
 
 BREAK_QUOTES = [
@@ -56,6 +56,7 @@ class DeepWorkCLI:
         self.break_start_time = None
         self.break_duration = 0
         self.break_quote = ""
+        self.focus_threshold = ALERT_THRESHOLD
         self.last_chime_timestamp = 0
 
     def get_daily_summary(self):
@@ -203,17 +204,23 @@ class DeepWorkCLI:
         sys.stdout.flush()
 
     def check_chime(self):
-        if self.mode != "BREAK": return
-
         now = time.time()
-        elapsed_break = now - self.break_start_time
-        remaining = self.break_duration * 60 - elapsed_break
+        if self.mode == "BREAK":
+            elapsed_break = now - self.break_start_time
+            remaining = self.break_duration * 60 - elapsed_break
 
-        if remaining <= 0:
-            if now - self.last_chime_timestamp >= 60:
-                self.play_chime()
-                self.last_chime_timestamp = now
-                self.last_msg = "!!! BREAK EXPIRED !!!"
+            if remaining <= 0:
+                if now - self.last_chime_timestamp >= 60:
+                    self.play_chime()
+                    self.last_chime_timestamp = now
+                    self.last_msg = "!!! BREAK EXPIRED !!!"
+        elif self.mode == "WORK":
+            if self.focus_start_time:
+                focus_elapsed = now - self.focus_start_time
+                if focus_elapsed >= self.focus_threshold:
+                    if now - self.last_chime_timestamp >= 60:
+                        self.play_chime()
+                        self.last_chime_timestamp = now
 
     def render_break(self):
         elapsed_break = time.time() - self.break_start_time
@@ -261,7 +268,7 @@ class DeepWorkCLI:
 
             color = "\033[1;34m"
             header = " DEEP WORK SESSION "
-            if focus_elapsed > ALERT_THRESHOLD:
+            if focus_elapsed > self.focus_threshold:
                 color = "\033[1;31;7m"
                 header = " !!! FOCUS LIMIT EXCEEDED !!! "
 
@@ -316,7 +323,7 @@ class DeepWorkCLI:
                 is_exceeded = False
                 if self.mode == "WORK" and self.focus_start_time:
                     focus_elapsed = now - self.focus_start_time
-                    is_exceeded = (focus_elapsed > ALERT_THRESHOLD)
+                    is_exceeded = (focus_elapsed > self.focus_threshold)
 
                 structural_change = (
                     buffer != last_buffer or
@@ -353,7 +360,7 @@ class DeepWorkCLI:
                         self.update_timer_ui()
                     last_render_second = current_second
 
-                if self.mode == "BREAK":
+                if self.mode in ["WORK", "BREAK"]:
                     self.check_chime()
 
                 rlist, _, _ = select.select([sys.stdin], [], [], 0.1)
@@ -420,7 +427,7 @@ class DeepWorkCLI:
         
         color = "\033[1;34m"
         header = " DEEP WORK SESSION "
-        if focus_elapsed > ALERT_THRESHOLD:
+        if focus_elapsed > self.focus_threshold:
             color = "\033[1;31;7m"
             header = " !!! FOCUS LIMIT EXCEEDED !!! "
 
@@ -479,6 +486,7 @@ class DeepWorkCLI:
                     self.mode = "WORK"
                     self.commit_to_ledger("Work Session Re-started at", [])
                     self.last_msg = "Work Resumed"
+                    self.last_chime_timestamp = 0
                     return
                 elif base_cmd == 'b':
                     self.last_msg = "Break time overload! Doing nothing."
@@ -499,6 +507,7 @@ class DeepWorkCLI:
                     self.commit_to_ledger("Triage", items_to_write)
                     self.triage_stack = active
                     self.mode = "WORK"; self.last_msg = ""
+                    self.last_chime_timestamp = 0
                     self.initial_stack = copy.deepcopy(self.triage_stack)
                 elif base_cmd == 'i':
                     if len(parts) > 1:
@@ -559,6 +568,24 @@ class DeepWorkCLI:
                     self.break_quote = random.choice(BREAK_QUOTES)
                     self.last_chime_timestamp = 0
                     self.commit_to_ledger(f"Break for {duration} at", [])
+                    return
+
+                if base_cmd == 'f' and self.mode == "WORK":
+                    if len(parts) > 1:
+                        try:
+                            self.focus_threshold = int(parts[1]) * 60
+                            self.last_chime_timestamp = 0
+                            self.last_msg = f"Focus threshold set to {parts[1]}m"
+                        except ValueError:
+                            self.last_msg = f"Invalid focus duration: {parts[1]}"
+                    else:
+                        val = input("Enter focus length (mins): ")
+                        try:
+                            self.focus_threshold = int(val) * 60
+                            self.last_chime_timestamp = 0
+                            self.last_msg = f"Focus threshold set to {val}m"
+                        except ValueError:
+                            self.last_msg = f"Invalid focus duration: {val}"
                     return
 
                 if base_cmd == 'n':
