@@ -264,7 +264,9 @@ class DeepWorkCLI:
             tm, ts = divmod(task_elapsed, 60)
 
             focus_elapsed = int(now - self.focus_start_time)
-            fm, fs = divmod(focus_elapsed, 60)
+            focus_remaining = self.focus_threshold - focus_elapsed
+            f_sign = "-" if focus_remaining < 0 else ""
+            fm, fs = divmod(abs(focus_remaining), 60)
 
             color = "\033[1;34m"
             header = " DEEP WORK SESSION "
@@ -273,7 +275,7 @@ class DeepWorkCLI:
                 header = " !!! FOCUS LIMIT EXCEEDED !!! "
 
             sys.stdout.write("\033[1;1H" + f"{color}{'='*65}\033[0m")
-            sys.stdout.write("\033[2;1H" + f"{color}{header}\033[0m | Task: {tm:02d}:{ts:02d} | Focus: {fm:02d}:{fs:02d}")
+            sys.stdout.write("\033[2;1H" + f"{color}{header}\033[0m | Task: {tm:02d}:{ts:02d} | Focus: {f_sign}{fm:02d}:{fs:02d}")
             sys.stdout.write("\033[3;1H" + f"{color}{'='*65}\033[0m")
         elif self.mode == "BREAK":
             elapsed_break = time.time() - self.break_start_time
@@ -423,7 +425,9 @@ class DeepWorkCLI:
         tm, ts = divmod(task_elapsed, 60)
 
         focus_elapsed = int(now - self.focus_start_time)
-        fm, fs = divmod(focus_elapsed, 60)
+        focus_remaining = self.focus_threshold - focus_elapsed
+        f_sign = "-" if focus_remaining < 0 else ""
+        fm, fs = divmod(abs(focus_remaining), 60)
         
         color = "\033[1;34m"
         header = " DEEP WORK SESSION "
@@ -434,7 +438,7 @@ class DeepWorkCLI:
         t = self.triage_stack[0]
         is_task = t['line'].startswith('[]')
         print(color + "="*65 + "\033[0m")
-        print(f"{color}{header}\033[0m | Task: {tm:02d}:{ts:02d} | Focus: {fm:02d}:{fs:02d}")
+        print(f"{color}{header}\033[0m | Task: {tm:02d}:{ts:02d} | Focus: {f_sign}{fm:02d}:{fs:02d}")
         print(color + "="*65 + "\033[0m")
         
         display_line = re.sub(r'^\[\s?\]\s*', '', t['line'])
