@@ -1,71 +1,81 @@
-Project Brief: A Python-based modal CLI tool (TUI) to capture and organize thoughts into trackable tasks and then present those tasks in a way to promote focused completion.
+# DeepWorkCLI
 
-Core Mechanics:
+A Python-based modal CLI tool (TUI) to capture and organize thoughts into trackable tasks and then present those tasks in a way to promote focused completion.
 
-File-Based: It parses a markdown-style .txt file where notes are taken and tasks are stored.
+## Core Philosophy: The Ledger
+This program acts as a "lens" for a chronological journal stored in a plain text file.
+- **Append Only:** We preserve history by primarily appending to the file rather than editing in place.
+- **Markers:** We use dividers (e.g., `------- Triage ... -------`) to denote blocks of time and session transitions.
+- **Free Write:** The "Free Write" area is conceptually the section after the very last marker in the file where notes and tasks are entered freely.
 
-Tasks: Tasks start with [], [ ], [x], [-], or [>]. [] or [ ] means Pending. [x] means Done. [-] means Cancelled. [>] means Deferred (to another day / txt file)
+## Syntax & Hierarchy
+- **Tasks:** Lines starting with `[]`, `[ ]`, `[x]`, `[-]`, or `[>]`.
+- **Notes:** Any line that isn't a task.
+- **Hierarchy:** Two leading spaces indicate a child relationship (subtask or note) to the task above.
 
-Subtasks: Indented lines starting with a task marker [] or [x] are toggleable sub-actions.
+## Modal Workflow
+The program has three modes: **Free Write**, **Triage**, and **Work**.
 
-Notes: Any line that isn't a task as defined above, is considered a note. Notes can be standalone. They can also belong to a task by being indented below a task.
+### 1. Free Write Mode
+Entered by opening your journal file in a text editor (like `vi`). This is where you enter notes and tasks freely.
 
-Ledger Strategy: The program primarily appends to the file, preserving a chronological history of thoughts and actions rather than editing in place.
+#### Vim Integration
+To integrate seamlessly with `vi`, add the following to your `.vimrc`:
+```vim
+" Press F5 to save and open current file in DeepWorkCLI
+map <F5> :w<CR>:!python3 ~/projects/deep-work-cli/deepworkcli.py "%"<CR>
+set autoread
+" Trigger autoread when changing buffers or focusing vim
+autocmd FocusGained,BufEnter,CursorHold,CursorHoldI * if mode() != 'c' | checktime | endif
+```
 
-Markers:
-  - ------- Triage Session "%D %r" -------
-  - ------- Free Write Session "%D %r" -------
-  - ------- Work Session "%D %r" -------
-  - ------- Completed "%D %r" -------
-  - ------- Deferred "%D %r" -------
-  - ------- Interrupted "%D %r" -------
+### 2. Triage Mode
+Entered by running the script with a filename. It parses the end of the file (after the last marker) for new notes and pending tasks.
 
-Modal Workflow: The program has three modes: Free Write, Triage, and Work
-  - Free Write mode is in vi. This is where notes and tasks are entered freely and in any order. The focus here is getting everything moving and out.
-  - Triage mode is where things start to get organized. It is entered by pressing F5 from an open file in vi. This mode is primarily for sorting tasks and notes.
-  - Work mode is for focused task completion. It shows the triaged tasks one at a time in the triaged order with any associated tasks and notes.
+**Commands:**
+- `p <src> <dest>`: **Prioritize/Reorder.** Moves item at index `<src>` to `<dest>`.
+- `a <note_idx> <task_idx>`: **Assign.** Moves a note (or task) at `<note_idx>` to be a sub-item of task at `<task_idx>`.
+- `i <idx>`: **Ignore.** Removes a note from the stack. If it's a task, marks it as cancelled `[-]`.
+- `w`: **Work.** Commits the triage session and enters Work Mode.
+- `q`: **Quit.** Returns to Free Write (exits the CLI).
 
-Free Write Mode:
-  - Enter by opening a file in vi
-  - Exit into Triage Mode by typing F5
+### 3. Work Mode
+Entered by typing `w` from Triage Mode. It displays the top task along with its associated notes and subtasks.
 
-Triage Mode:
-  - Picks up any notes and pending tasks from the end of the file after the last marker
-  - Enter by typing F5 from any open vi file
-  - Displays a list of notes and tasks from Free Write Mode
-  - Displays a footer listing the possible commands
-  - Select note or task by moving the selector down or up by typing 'j' or 'k' respectively
-  - Ignore a note by selecting it and typing 'i'.
-  - An ignored note is removed from the triaged list of notes and tasks.
-  - Move a task or note by selecting it, holding down CTRL, and moving it left, down, up, or right with 'h', 'j', 'k', or 'l' respectively
-  - Move a task and it's associated notes and subtasks to the top of the list by selecting it and typing 'p' (for prioritize)
-  - Exit back to Free Write Mode by typing 'q'
-  - Exit to Work Mode by typing 'w'
+**Features:**
+- **Task Timer:** Tracks time spent on the current task.
+- **Focus Timer:** Countdown timer for the overall session.
+- **Auditory Feedback:** Chimes when timers expire.
 
-Work Mode:
-  - Enter by typing 'w' from Triage Mode
-  - Displays the top task from Triage Mode along with any associated notes or subtasks
-  - Displays a footer listing the possible commands
-  - Select a subtask by moving the selector down or up by typing 'j' or 'k' respectively
-  - Complete the task and all its associated subtasks by typing 'x'
-  - Complete a subtask by selecting it and typing 'x'
-  - A completed task is marked with [x] and appended to the end of the file after a Completed marker.
-  - Add a task by typing 'n', entering a line of text, and pressing Enter.
-  - New tasks are appended to the list of tasks
-  - Add a prioritized task by typing 'N', entering a line of text, and pressing Enter.
-  - The prioritized task is displayed as the current focused task
-  - Add a new note or subtask to the current focused task by typing 'n', entering a line of text beginning with '  ' (2 spaces), and pressing Enter.
-  - New notes or subtasks added to the current focused task are shown under that task after any already associated notes or subtasks
-  - Defer a task and all its subtasks by typing '>'
-  - Defer a subtask by selecting it and typing '>'
-  - A deferred task is marked with [>] appended to another .txt file after a Deferred marker. By default, that file will be called yyyymmdd-plan.txt, but it should be able to be changed.
-  - Cancel a task or subtask by selecting it and typing '-'.
-  - A cancelled task is marked with [-] and appended to the bottom of the file after a Cancelled marker.
-  - Exit back to Free Write Mode by typing 'q'
-  - Exit back to Triage Mode by typing 't'
-  - Exiting Work Mode in any way, SIGINT, 'q', 't', appends any pending tasks and notes to the end of the file after an Interrupted marker
-  - Exiting Work Mode the CLI displays a Daily Scorecard which is a summary of tasks Finished, Cancelled, and Deferred during that Work Session
+**Commands:**
+- `x`: **Done.** Marks the current task and all subtasks as complete `[x]`.
+- `x<idx>`: **Subtask Done.** Marks the subtask at `<idx>` as complete `[x]`.
+- `-`: **Cancel.** Marks the current task as cancelled `[-]`.
+- `>`: **Defer.** Marks the task as deferred `[>]` and appends it to a tomorrow-plan.txt file.
+- `f <mins>` or `f`: **Focus.** Sets/Changes the Focus Timer duration.
+- `n`: **Add.** Adds a new top-level task/note or a sub-item (if input starts with a space).
+- `b <mins>`: **Break.** Enters Break Mode for specified minutes (default 5).
+- `i`: **Ignore.** Skips the current item (marks as cancelled if it's a task).
+- `t`: **Triage.** Returns to Triage Mode.
+- `q`: **Quit.** Exits to Free Write.
 
-Break Mode:
-  - Take a measured break by typing 'b' in Work Mode
-  - Restart the Work Session after a break by typing 'w'
+### 4. Break Mode
+Entered via `b` in Work Mode. Displays inspirational quotes and a countdown.
+
+**Commands:**
+- `w`: **Work.** Resumes the Work session.
+- `n`: **Add.** Add notes or tasks during your break.
+- `t`: **Triage.** Return to Triage mode.
+- `q`: **Quit.** Exits the CLI.
+
+## Markers
+The ledger uses the following markers (Timestamp format: `MM/DD/YYYY HH:MM:SS AM/PM`):
+- `------- Triage <Timestamp> -------`
+- `------- Work <Timestamp> -------`
+- `------- New Entry <Timestamp> -------`
+- `------- Cancelled <Timestamp> -------`
+- `------- Interrupted <Timestamp> -------`
+- `------- Work Session Complete <Timestamp> -------`
+- `------- Work Session Re-started at <Timestamp> -------`
+- `------- Break for <mins> at <Timestamp> -------`
+- `------- Deferred from last session <Timestamp> -------`

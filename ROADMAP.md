@@ -1,17 +1,20 @@
-Future Roadmap:
+# Future Roadmap
 
-Rename Work Mode to Focus Mode: The whole point of the program is to enable a process of iterative organization and then focus. I like calling it a Focus Session rather than a Work Session. It sounds more appealing somehow. Focus has less of a negative conotation than Work.
+## UI & Interaction
+- **Rename Work Mode to Focus Mode:** Update terminology throughout the app and documentation to use "Focus" instead of "Work".
+- **Selector-based Navigation:** Implement `j/k` for navigation and `CTRL+hjkl` for reordering/indenting in Triage mode, replacing or supplementing the current numbered command system.
+- **Prioritized Add (N):** Implement the `N` command in Work mode to add a new task and immediately prioritize it as the active focus.
+- **Deadline Timer:** Countdown in the Work Mode header for tasks with specific time-of-day deadlines.
 
-Deadline Timer: Countdown in the Work Mode header for tasks with specific time-of-day deadlines.
+## Ledger Improvements
+- **Action-Specific Markers:** Transition from generic markers (like `------- Work -------`) to more specific ones like `------- Completed -------` or `------- Deferred -------` to improve ledger auditability.
+- **Session Markers:** Implement markers for `Free Write Session` to better segment purely editorial time.
 
-Task Timer vs Work Mode Timer: Have an overall session timer and individual task timers. These will work like a stopwatch to track how long the session has been going and how long each task has taken. This could also be used to remind about taking breaks.
+## Fixes & Polish
+- **SIGINT Rescue:** Ensure that exiting via `Ctrl+C` (SIGINT) also triggers a rescue append of pending tasks, similar to the `q` command.
+- **Improved Deduplication:** Further refine the `load_context` parser to handle complex reordering and nesting edge cases more robustly.
 
-Auditory Feedback: System chimes for focus limits and deadlines.
-
-Issues to Investigate:
-
-Interuption Logic: I don't know exactly how it happens, but when I interupt a session with unfinished tasks and typing "q", it appears that the pending tasks are duplicated at the end of my free write at the bottom of the file.
-
-Ignored Notes in Work Mode: Ignored notes are showing up in work mode. I think this has to do with the fact that there is flaw in the logic of the reordering vs ignoring. When I reorder the notes, then ignore a note, then assign a task, etc. Some things start to disappear or reappear in the list that have been ignored. I think it has to do with when a task is assigned as a subtask of another.
-
-Triage and work markers not placed: After a triage and then "q", (I think), the triage marker doesn't get placed. A similar thing happens when exiting work mode via "q", although that may be slightly different. In any case, there is some strange duplication that happens. However, I think the duplication is technically expected except that there should be a marker between it to indicate it was part of a triage session.
+## Completed Items
+- **Task Timer vs Focus Timer:** Individual task tracking alongside overall session tracking.
+- **Auditory Feedback:** System chimes for focus limits and break expirations.
+- **Flexible Focus Duration:** The `f` command to adjust focus thresholds on the fly.

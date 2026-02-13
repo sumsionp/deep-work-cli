@@ -1,9 +1,9 @@
-# DeepWorkCLI Agent Instructions (v3.4)
+# DeepWorkCLI Agent Instructions (v3.5)
 
 ## Core Philosophy: The Ledger
 This program is a "lens" for a chronological journal. 
 - **Rule 1:** Append, don't edit. We preserve history.
-- **Rule 2:** Use Markers (e.g., `------- Triage Session -------`) to denote blocks of time.
+- **Rule 2:** Use Markers (e.g., `------- Triage ... -------`) to denote blocks of time.
 - **Rule 3:** The "Free Write" is always the section after the very last marker in the file.
 
 ## Syntax & Hierarchy
@@ -13,11 +13,6 @@ This program is a "lens" for a chronological journal.
 
 ## Modal State Machine
 - **Free Write (via vi):** User enters data. 
-- **Triage (F5):** Parsed from Free Write. Commands: `j/k` (nav), `i` (ignore), `CTRL+hjkl` (move/indent), `p` (prioritize).
-- **Work (w):** Focused UI. Commands: `x` (complete), `n/N` (add task/note), `-` (cancel), `>` (defer), `b` (break).
-- **Exit Logic:** ANY exit from Work/Triage (q, SIGINT, etc.) must trigger a "Rescue Append" of pending items under an `------- Interrupted -------` marker.
-
-## Critical Bugs to Fix
-1. **Duplication on Interrupt:** Unfinished tasks are duplicating during 'q' exits.
-2. **Ignored Note Leakage:** 'i' ignored notes are reappearing in Work mode.
-3. **Missing Markers:** Markers are failing to write on certain 'q' exit paths.
+- **Triage:** Parsed from Free Write. Uses numbered commands: `p` (prioritize), `a` (assign), `i` (ignore).
+- **Work (w):** Focused UI. Commands: `x` (complete), `n` (add task/note), `-` (cancel), `>` (defer), `b` (break), `f` (focus duration).
+- **Exit Logic:** Exiting from Work/Triage (via `q`) must trigger a "Rescue Append" of pending items under an `------- Interrupted -------` marker. (Note: `SIGINT/Ctrl+C` support is currently pending).
