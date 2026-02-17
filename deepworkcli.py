@@ -203,28 +203,21 @@ class DeepWorkCLI:
                 'notes': entry['notes']
             })
 
-    def _defer_task(self, task, target_date):
-        """Internal helper to defer a single task to a target date."""
+    def _prepare_defer_tasks(self, task, target_date):
+        """Prepare tasks for ledger and target file without committing them."""
         is_today = target_date.date() == datetime.now().date()
-        task_content = re.sub(r'^\[[x\->\s]?\]\s*', '', task['line'])
-
         if is_today:
-            self.commit_to_ledger("Deferred", [task])
-            return "today"
+            return task, None, "today"
         else:
             target_file = get_target_file(target_date)
-
             # Target version: main task [], subtasks preserve status
             target_task = self._prepare_task_with_markers(task, '[]', '[]')
-            self.commit_to_ledger("Deferred from last session", [target_task], target_file=target_file)
-
             # Current ledger version: main task [>], pending subtasks [>], others preserve
             ledger_task = self._prepare_task_with_markers(task, '[>]', '[>]')
-            self.commit_to_ledger("Deferred", [ledger_task])
-            return target_file
+            return ledger_task, target_task, target_file
 
     def _handle_defer_command(self, base_cmd, parts):
-        """Common logic for > and d deferral commands."""
+        """Common logic for > and >> deferral commands."""
         defer_date_str = " ".join(parts[1:])
         target_date = parse_defer_date(defer_date_str)
         if not target_date:
@@ -234,32 +227,37 @@ class DeepWorkCLI:
         if not self.triage_stack:
             return True
 
+        ledger_items = []
+        target_items = []
+        target_res = None
+
         if base_cmd == '>>':
             count = len(self.triage_stack)
-            results = []
-            last_res = ""
             while self.triage_stack:
-                task_to_defer = self.triage_stack.pop(0)
-                res = self._defer_task(task_to_defer, target_date)
-                if res == "today":
-                    results.append(task_to_defer)
-                else:
-                    last_res = res
+                task = self.triage_stack.pop(0)
+                l_task, t_task, res = self._prepare_defer_tasks(task, target_date)
+                ledger_items.append(l_task)
+                if t_task: target_items.append(t_task)
+                target_res = res
 
-            if results: # They were deferred to today
-                self.triage_stack.extend(results)
+            if target_res == "today":
+                self.commit_to_ledger("Deferred", ledger_items)
+                self.triage_stack.extend(ledger_items)
                 self.last_msg = f"Deferred {count} items to end of today's stack"
             else:
-                self.last_msg = f"Deferred {count} items to {last_res}"
+                self.commit_to_ledger("Deferred from last session", target_items, target_file=target_res)
+                self.commit_to_ledger("Deferred", ledger_items)
+                self.last_msg = f"Deferred {count} items to {target_res}"
         else: # base_cmd == '>'
-            task = self.triage_stack[0]
-            res = self._defer_task(task, target_date)
+            task = self.triage_stack.pop(0)
+            l_task, t_task, res = self._prepare_defer_tasks(task, target_date)
             if res == "today":
-                item = self.triage_stack.pop(0)
-                self.triage_stack.append(item)
+                self.commit_to_ledger("Deferred", [l_task])
+                self.triage_stack.append(l_task)
                 self.last_msg = "Deferred to end of today's stack"
             else:
-                self.triage_stack.pop(0)
+                self.commit_to_ledger("Deferred from last session", [t_task], target_file=res)
+                self.commit_to_ledger("Deferred", [l_task])
                 self.last_msg = f"Deferred to {res}"
 
         self.task_start_time = None
