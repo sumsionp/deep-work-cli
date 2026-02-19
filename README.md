@@ -9,9 +9,17 @@ This program acts as a "lens" for a chronological journal stored in a plain text
 - **Free Write:** The "Free Write" area is conceptually the section after the very last marker in the file where notes and tasks are entered freely.
 
 ## Syntax & Hierarchy
-- **Tasks:** Lines starting with `[]`, `[ ]`, `[x]`, `[-]`, or `[>]`.
+- **Tasks:** Lines starting with `[]`, `[ ]`, `[x]`, `[-]`, `[>]`, or `[e]`.
 - **Notes:** Any line that isn't a task.
 - **Hierarchy:** Two leading spaces indicate a child relationship (subtask or note) to the task above.
+
+### Meeting Support
+Tasks can be time-aware by including a time block. Meetings automatically preempt the current task when their start time arrives.
+Supported formats:
+- `2:00-3:00 PM`
+- `2-3 PM`
+- `11:00 AM-1:00 PM`
+- `2 PM 2h 15m`
 
 ## Modal Workflow
 The program has three modes: **Free Write**, **Triage**, and **Work**.
@@ -35,6 +43,7 @@ Entered by running the script with a filename. It parses the end of the file (af
 **Commands:**
 - `p <src> <dest>`: **Prioritize/Reorder.** Moves item at index `<src>` to `<dest>`.
 - `a <note_idx> <task_idx>`: **Assign.** Moves a note (or task) at `<note_idx>` to be a sub-item of task at `<task_idx>`.
+- `e <idx>`: **Edit.** Opens the item and its sub-items in `vi` for editing.
 - `i <idx>`: **Ignore.** Removes a note from the stack. If it's a task, marks it as cancelled `[-]`.
 - `w`: **Work.** Commits the triage session and enters Work Mode.
 - `q`: **Quit.** Returns to Free Write (exits the CLI).
@@ -50,6 +59,7 @@ Entered by typing `w` from Triage Mode. It displays the top task along with its 
 **Commands:**
 - `x`: **Done.** Marks the current task and all subtasks as complete `[x]`.
 - `x<idx>`: **Subtask Done.** Marks the subtask at `<idx>` as complete `[x]`.
+- `e`: **Edit.** Opens the current task and its sub-items in `vi` for editing.
 - `-`: **Cancel.** Marks the current task as cancelled `[-]`.
 - `>`: **Defer.** Marks the task as deferred `[>]` and appends it to a tomorrow-plan.txt file.
 - `f <mins>` or `f`: **Focus.** Sets/Changes the Focus Timer duration.
@@ -79,3 +89,4 @@ The ledger uses the following markers (Timestamp format: `MM/DD/YYYY HH:MM:SS AM
 - `------- Work Session Re-started at <Timestamp> -------`
 - `------- Break for <mins> at <Timestamp> -------`
 - `------- Deferred from last session <Timestamp> -------`
+- `------- Edited <Timestamp> -------`
