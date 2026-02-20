@@ -10,6 +10,7 @@ import termios
 import tty
 import subprocess
 import shlex
+import tempfile
 from datetime import datetime, timedelta
 
 # --- CONFIG ---
@@ -80,6 +81,61 @@ def parse_defer_date(date_str):
 def get_target_file(date):
     return date.strftime(f'{DATE_FORMAT}-plan.txt')
 
+def parse_meeting_time(text):
+    now = datetime.now()
+    text = text.upper()
+
+    # 1. Check for 2 PM 2h 15m format
+    m1 = re.search(r'(\d{1,2}(?::\d{2})?)\s*(AM|PM)\s*(?:(\d+)H)?\s*(?:(\d+)M)?', text)
+    if m1 and (m1.group(3) or m1.group(4)):
+        start_time_str = m1.group(1)
+        ampm = m1.group(2)
+        hours = int(m1.group(3)) if m1.group(3) else 0
+        minutes = int(m1.group(4)) if m1.group(4) else 0
+
+        start_dt = _parse_time_with_ampm(start_time_str, ampm, now)
+        end_dt = start_dt + timedelta(hours=hours, minutes=minutes)
+        return start_dt, end_dt
+
+    # 2. Check for 11:00 AM-1:00 PM format
+    m2 = re.search(r'(\d{1,2}(?::\d{2})?)\s*(AM|PM)\s*-\s*(\d{1,2}(?::\d{2})?)\s*(AM|PM)', text)
+    if m2:
+        start_dt = _parse_time_with_ampm(m2.group(1), m2.group(2), now)
+        end_dt = _parse_time_with_ampm(m2.group(3), m2.group(4), now)
+        return start_dt, end_dt
+
+    # 3. Check for 2:00-3:00 PM or 2-3 PM format
+    m3 = re.search(r'(\d{1,2}(?::\d{2})?)\s*-\s*(\d{1,2}(?::\d{2})?)\s*(AM|PM)', text)
+    if m3:
+        end_time_str = m3.group(2)
+        ampm = m3.group(3)
+        end_dt = _parse_time_with_ampm(end_time_str, ampm, now)
+
+        start_time_str = m3.group(1)
+        start_dt = _parse_time_with_ampm(start_time_str, ampm, now)
+
+        if start_dt > end_dt:
+            alt_ampm = 'AM' if ampm == 'PM' else 'PM'
+            start_dt = _parse_time_with_ampm(start_time_str, alt_ampm, now)
+
+        return start_dt, end_dt
+
+    return None
+
+def _parse_time_with_ampm(time_str, ampm, reference_date):
+    if ':' in time_str:
+        h, m = map(int, time_str.split(':'))
+    else:
+        h = int(time_str)
+        m = 0
+
+    if ampm == 'PM' and h < 12:
+        h += 12
+    elif ampm == 'AM' and h == 12:
+        h = 0
+
+    return reference_date.replace(hour=h, minute=m, second=0, microsecond=0)
+
 class DeepWorkCLI:
     def __init__(self):
         self.mode = "TRIAGE"
@@ -93,6 +149,8 @@ class DeepWorkCLI:
         self.break_quote = ""
         self.focus_threshold = ALERT_THRESHOLD
         self.last_chime_timestamp = 0
+        self.chimed_meetings = set()
+        self.original_termios = None
 
     def get_daily_summary(self):
         counts = {'[x]': 0, '[-]': 0, '[>]': 0}
@@ -106,7 +164,7 @@ class DeepWorkCLI:
                 if not clean or "-------" in clean or line.startswith('  '):
                     continue
 
-                marker_match = re.match(r'^\[([x\->\s]?)\]', clean)
+                marker_match = re.match(r'^\[([xe\->\s]?)\]', clean)
                 if marker_match:
                     state = marker_match.group(1)
                     content = clean[marker_match.end():].strip()
@@ -117,7 +175,7 @@ class DeepWorkCLI:
         return counts
 
     def load_context(self):
-        """Whole-file aware parser with resolution logic."""
+        """Whole-file aware parser with resolution logic. Resolutions are [x], [-], [>], and [e]."""
         if not os.path.exists(FILENAME):
             with open(FILENAME, 'w') as f: f.write(f"Session Start - {get_timestamp()}\n")
             self.triage_stack = []
@@ -147,7 +205,7 @@ class DeepWorkCLI:
             
             if not line.startswith('  '):
                 clean = line.strip()
-                marker_match = re.match(r'^\[([x\->\s]?)\]\s*', clean)
+                marker_match = re.match(r'^\[([xe\->\s]?)\]\s*', clean)
                 if marker_match:
                     state = marker_match.group(1).strip()
                     content = clean[marker_match.end():].strip()
@@ -178,13 +236,13 @@ class DeepWorkCLI:
                     notes_list = active_entries[last_entry_content]['notes']
 
                     # Subtask/Note resolution logic
-                    sub_marker_match = re.match(r'^\[([x\->\s]?)\]\s*', note)
+                    sub_marker_match = re.match(r'^\[([xe\->\s]?)\]\s*', note)
                     if sub_marker_match:
                         sub_content = note[sub_marker_match.end():].strip()
                         # Remove any existing instance of this subtask content
                         new_notes = []
                         for n in notes_list:
-                            m = re.match(r'^\[[x\->\s]?\]\s*', n)
+                            m = re.match(r'^\[[xe\->\s]?\]\s*', n)
                             if m and n[m.end():].strip() == sub_content:
                                 continue
                             new_notes.append(n)
@@ -264,14 +322,70 @@ class DeepWorkCLI:
         self.initial_stack = copy.deepcopy(self.triage_stack)
         return True
 
+    def _edit_item(self, item):
+        original_item = copy.deepcopy(item)
+
+        content = [item['line']]
+        for note in item['notes']:
+            content.append(f"  {note}")
+
+        with tempfile.NamedTemporaryFile(suffix=".txt", mode='w+', delete=False) as tf:
+            tf.write("\n".join(content))
+            temp_path = tf.name
+
+        try:
+            # We must restore terminal settings before calling vi
+            if self.original_termios:
+                fd = sys.stdin.fileno()
+                termios.tcsetattr(fd, termios.TCSADRAIN, self.original_termios)
+
+            os.system(f"vi {temp_path}")
+
+            with open(temp_path, 'r') as f:
+                new_lines = [l.rstrip() for l in f.readlines() if l.strip()]
+
+            if not new_lines: return item
+
+            new_line = new_lines[0]
+            new_notes = [l[2:] if l.startswith('  ') else l.strip() for l in new_lines[1:]]
+
+            new_item = {'line': new_line, 'notes': new_notes}
+
+            if new_item != original_item:
+                # Handle ledger
+                edited_old = copy.deepcopy(original_item)
+                # If it was a task, mark as [e]
+                if edited_old['line'].startswith('[]'):
+                    edited_old['line'] = re.sub(r'^\[\s?\]', '[e]', edited_old['line'])
+                else:
+                    # If it was a note, we just mark it as [e] anyway to satisfy auditability
+                    edited_old['line'] = f"[e] {edited_old['line']}"
+
+                # New item should be [] if it wasn't already or if it's a note that we want to become a task?
+                # Actually, the user can decide in vi.
+                # But if it doesn't have a marker, and they wanted it to be a task, they should add [].
+                # However, the user said "The new task should be written as pending '[]'".
+                # Let's ensure if it was a task, it stays a task.
+                if original_item['line'].startswith('[]') and not new_item['line'].startswith('[]'):
+                    new_item['line'] = f"[] {new_item['line']}"
+
+                self.commit_to_ledger("Edited", [edited_old, new_item])
+                self.last_msg = "Item Edited"
+                return new_item
+
+            return item
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
     def _prepare_task_with_markers(self, task, main_marker, pending_sub_marker):
         """Helper to create a copy of a task with updated markers for pending items."""
         new_task = copy.deepcopy(task)
-        content = re.sub(r'^\[[x\->\s]?\]\s*', '', task['line'])
+        content = re.sub(r'^\[[xe\->\s]?\]\s*', '', task['line'])
         new_task['line'] = f"{main_marker} {content}"
         new_notes = []
         for n in task['notes']:
-            m = re.match(r'^\[([x\->\s]?)\]\s*', n)
+            m = re.match(r'^\[([xe\->\s]?)\]\s*', n)
             if m:
                 state = m.group(1).strip()
                 if not state: # pending
@@ -331,12 +445,48 @@ class DeepWorkCLI:
                     self.last_chime_timestamp = now
                     self.last_msg = "!!! BREAK EXPIRED !!!"
         elif self.mode == "WORK":
+            is_meeting = False
+            if self.triage_stack:
+                is_meeting = parse_meeting_time(self.triage_stack[0]['line']) is not None
+
             if self.focus_start_time:
                 focus_elapsed = now - self.focus_start_time
                 if focus_elapsed >= self.focus_threshold:
                     if now - self.last_chime_timestamp >= 60:
-                        self.play_chime()
+                        if not is_meeting:
+                            self.play_chime()
                         self.last_chime_timestamp = now
+
+    def check_meetings(self):
+        if self.mode != "WORK": return
+        if not self.triage_stack: return
+
+        now = datetime.now()
+        found_active_meeting = False
+        for i, task in enumerate(self.triage_stack):
+            m_time = parse_meeting_time(task['line'])
+            if m_time and m_time[0] <= now < m_time[1]:
+                meeting_id = f"{task['line']}_{m_time[0]}"
+                if meeting_id not in self.chimed_meetings:
+                    self.play_chime()
+                    self.chimed_meetings.add(meeting_id)
+                    task_content = re.sub(r'^\[[xe\->\s]?\]\s*', '', task['line'])
+                    self.last_msg = f"Meeting Starting: {task_content}"
+
+                if i > 0 and not found_active_meeting:
+                    current_task = self.triage_stack[0]
+                    current_m_time = parse_meeting_time(current_task['line'])
+                    is_current_active_meeting = current_m_time and current_m_time[0] <= now < current_m_time[1]
+
+                    if not is_current_active_meeting:
+                        self.triage_stack.insert(0, self.triage_stack.pop(i))
+                        self.task_start_time = None
+                        task_content = re.sub(r'^\[[xe\->\s]?\]\s*', '', self.triage_stack[0]['line'])
+                        self.last_msg = f"Meeting Started: {task_content}"
+                        found_active_meeting = True
+
+                if i == 0:
+                    found_active_meeting = True
 
     def render_break(self):
         elapsed_break = time.time() - self.break_start_time
@@ -384,6 +534,17 @@ class DeepWorkCLI:
             f_sign = "-" if focus_remaining < 0 else ""
             fm, fs = divmod(abs(focus_remaining), 60)
 
+            meeting_time = None
+            if self.triage_stack:
+                meeting_time = parse_meeting_time(self.triage_stack[0]['line'])
+            meeting_timer_str = ""
+            if meeting_time:
+                now_dt = datetime.now()
+                remaining = int((meeting_time[1] - now_dt).total_seconds())
+                m_sign = "-" if remaining < 0 else ""
+                mm, ms = divmod(abs(remaining), 60)
+                meeting_timer_str = f" | Meeting: {m_sign}{mm:02d}:{ms:02d}"
+
             color = "\033[1;34m"
             header = " DEEP WORK SESSION "
             if focus_elapsed > self.focus_threshold:
@@ -391,7 +552,7 @@ class DeepWorkCLI:
                 header = " !!! FOCUS LIMIT EXCEEDED !!! "
 
             sys.stdout.write("\033[1;1H" + f"{color}{'='*65}\033[0m")
-            sys.stdout.write("\033[2;1H" + f"{color}{header}\033[0m | Task: {tm:02d}:{ts:02d} | Focus: {f_sign}{fm:02d}:{fs:02d}")
+            sys.stdout.write("\033[2;1H" + f"{color}{header}\033[0m | Task: {tm:02d}:{ts:02d} | Focus: {f_sign}{fm:02d}:{fs:02d}{meeting_timer_str}")
             sys.stdout.write("\033[3;1H" + f"{color}{'='*65}\033[0m")
         elif self.mode == "BREAK":
             elapsed_break = time.time() - self.break_start_time
@@ -416,7 +577,7 @@ class DeepWorkCLI:
         self.initial_stack = copy.deepcopy(self.triage_stack)
 
         fd = sys.stdin.fileno()
-        old_settings = termios.tcgetattr(fd)
+        self.original_termios = termios.tcgetattr(fd)
         try:
             tty.setcbreak(fd)
             buffer = ""
@@ -481,13 +642,16 @@ class DeepWorkCLI:
                 if self.mode in ["WORK", "BREAK"]:
                     self.check_chime()
 
+                if self.mode == "WORK":
+                    self.check_meetings()
+
                 rlist, _, _ = select.select([sys.stdin], [], [], 0.1)
                 if rlist:
                     char = sys.stdin.read(1)
                     if char == '\n' or char == '\r':
                         cmd = buffer.strip()
                         buffer = ""
-                        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                        termios.tcsetattr(fd, termios.TCSADRAIN, self.original_termios)
                         print()
                         result = self.handle_command(cmd)
                         if result == "QUIT":
@@ -510,13 +674,34 @@ class DeepWorkCLI:
         except KeyboardInterrupt:
             pass
         finally:
-            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+            termios.tcsetattr(fd, termios.TCSADRAIN, self.original_termios)
 
     def render_triage(self):
         print(f"--- TRIAGE: {os.path.basename(FILENAME)} ---")
+
+        meetings = []
+        for i, t in enumerate(self.triage_stack):
+            m_time = parse_meeting_time(t['line'])
+            if m_time:
+                meetings.append({'idx': i, 'start': m_time[0], 'end': m_time[1]})
+
+        overlapping_indices = set()
+        for i in range(len(meetings)):
+            for j in range(i + 1, len(meetings)):
+                m1 = meetings[i]
+                m2 = meetings[j]
+                if m1['start'] < m2['end'] and m2['start'] < m1['end']:
+                    overlapping_indices.add(m1['idx'])
+                    overlapping_indices.add(m2['idx'])
+
         visible_count = 0
         for i, t in enumerate(self.triage_stack):
-            color = "\033[1;36m" if '[]' in t['line'] else ""
+            if i in overlapping_indices:
+                color = "\033[1;31m"
+            elif '[]' in t['line']:
+                color = "\033[1;36m"
+            else:
+                color = ""
             print(f"{i}: {color}{t['line']}\033[0m")
             for j, n in enumerate(t['notes']):
                 n_color = "\033[1;36m" if '[]' in n else ""
@@ -526,7 +711,7 @@ class DeepWorkCLI:
         if visible_count == 0:
             print("\n\033[1;36m[FREE WRITE MODE]\033[0m Everything triaged or finished.")
         else:
-            print("\nCmds: [p# #] reorder, [a# #] assign, [i#] ignore, [N] prioritize, [>>] defer all, [w] work, [q] quit")
+            print("\nCmds: [p# #] reorder, [a# #] assign, [e#] edit, [i#] ignore, [N] prioritize, [>>] defer all, [w] work, [q] quit")
 
     def render_work(self):
         if not self.triage_stack:
@@ -545,16 +730,25 @@ class DeepWorkCLI:
         f_sign = "-" if focus_remaining < 0 else ""
         fm, fs = divmod(abs(focus_remaining), 60)
         
+        t = self.triage_stack[0]
+        meeting_time = parse_meeting_time(t['line'])
+        meeting_timer_str = ""
+        if meeting_time:
+            now_dt = datetime.now()
+            remaining = int((meeting_time[1] - now_dt).total_seconds())
+            m_sign = "-" if remaining < 0 else ""
+            mm, ms = divmod(abs(remaining), 60)
+            meeting_timer_str = f" | Meeting: {m_sign}{mm:02d}:{ms:02d}"
+
         color = "\033[1;34m"
         header = " DEEP WORK SESSION "
         if focus_elapsed > self.focus_threshold:
             color = "\033[1;31;7m"
             header = " !!! FOCUS LIMIT EXCEEDED !!! "
 
-        t = self.triage_stack[0]
         is_task = t['line'].startswith('[]')
         print(color + "="*65 + "\033[0m")
-        print(f"{color}{header}\033[0m | Task: {tm:02d}:{ts:02d} | Focus: {f_sign}{fm:02d}:{fs:02d}")
+        print(f"{color}{header}\033[0m | Task: {tm:02d}:{ts:02d} | Focus: {f_sign}{fm:02d}:{fs:02d}{meeting_timer_str}")
         print(color + "="*65 + "\033[0m")
         
         display_line = re.sub(r'^\[\s?\]\s*', '', t['line'])
@@ -566,7 +760,7 @@ class DeepWorkCLI:
             n_color = "\033[1;36m" if '[]' in n else ""
             print(f"  {i}: {n_color}{n}\033[0m")
         print("\n" + color + "-"*65 + "\033[0m")
-        print("Cmds: [x] done, [x#] subtask, [-] cancel, [>] defer, [>>] defer all, [f#] focus, [N] prioritize, [n] add, [i] ignore, [t] triage, [q] quit")
+        print("Cmds: [x] done, [x#] subtask, [e] edit, [-] cancel, [>] defer, [>>] defer all, [f#] focus, [N] prioritize, [n] add, [i] ignore, [t] triage, [q] quit")
 
     def handle_command(self, cmd):
         try:
@@ -602,7 +796,7 @@ class DeepWorkCLI:
                 if not line.strip(): return
 
                 clean = line.strip()
-                clean = re.sub(r'^\[[x\->\s]?\]\s*', '', clean)
+                clean = re.sub(r'^\[[xe\->\s]?\]\s*', '', clean)
                 item = {'line': f"[] {clean}", 'notes': []}
 
                 self.commit_to_ledger("Prioritized Task", [item])
@@ -610,6 +804,8 @@ class DeepWorkCLI:
                 self.task_start_time = None
                 self.initial_stack = copy.deepcopy(self.triage_stack)
                 self.last_msg = "Task Added & Prioritized"
+                if self.mode == "WORK":
+                    self.check_meetings()
                 return
 
             if self.mode == "BREAK":
@@ -638,6 +834,20 @@ class DeepWorkCLI:
 
             if self.mode == "TRIAGE":
                 if base_cmd == 'w':
+                    now = datetime.now()
+                    new_stack = []
+                    for t in self.triage_stack:
+                        m_time = parse_meeting_time(t['line'])
+                        if m_time and m_time[1] < now:
+                            # Meeting already ended
+                            task_content = re.sub(r'^\[[xe\->\s]?\]\s*', '', t['line'])
+                            t['line'] = f"[x] {task_content}"
+                            t['notes'] = [f"[x] " + re.sub(r'^\[[xe\->\s]?\]\s*', '', n) for n in t['notes']]
+                            self.commit_to_ledger("Meeting Auto-Completed", [t])
+                            continue
+                        new_stack.append(t)
+                    self.triage_stack = new_stack
+
                     active = self.triage_stack
                     items_to_write = active if active != self.initial_stack else []
                     self.commit_to_ledger("Triage", items_to_write)
@@ -657,14 +867,14 @@ class DeepWorkCLI:
                     item = self.triage_stack.pop(idx)
                     if item['line'].startswith('[]'):
                         # It's a task, mark as cancelled
-                        task_content = re.sub(r'^\[\s?\]\s*', '', item['line'])
+                        task_content = re.sub(r'^\[[xe\->\s]?\]\s*', '', item['line'])
                         item['line'] = f"[-] {task_content}"
                         new_notes = []
                         for n in item['notes']:
-                            if re.match(r'^\[[x>]\]', n):
+                            if re.match(r'^\[[xe>]\]', n):
                                 new_notes.append(n)
                             else:
-                                clean_note = re.sub(r'^\[[\s\-]?\]\s*', '', n)
+                                clean_note = re.sub(r'^\[[xe\->\s]?\]\s*', '', n)
                                 new_notes.append(f"[-] {clean_note}")
                         item['notes'] = new_notes
                         self.commit_to_ledger("Cancelled", [item])
@@ -675,6 +885,11 @@ class DeepWorkCLI:
                     src_str, dest_idx = parts[1], int(parts[2])
                     item = self.triage_stack[int(src_str.split('.')[0])]['notes'].pop(int(src_str.split('.')[1])) if '.' in src_str else self.triage_stack.pop(int(src_str))['line']
                     self.triage_stack[dest_idx]['notes'].append(item)
+                elif base_cmd == 'e':
+                    idx = int(parts[1]) if len(parts) > 1 else 0
+                    if 0 <= idx < len(self.triage_stack):
+                        self.triage_stack[idx] = self._edit_item(self.triage_stack[idx])
+                        self.initial_stack = copy.deepcopy(self.triage_stack)
 
                 elif base_cmd in ['>', '>>']:
                     if self._handle_defer_command(base_cmd, parts):
@@ -726,6 +941,11 @@ class DeepWorkCLI:
                             self.last_msg = f"Focus threshold set to {val}m"
                         except ValueError:
                             self.last_msg = f"Invalid focus duration: {val}"
+                    return
+
+                if base_cmd == 'e':
+                    self.triage_stack[0] = self._edit_item(self.triage_stack[0])
+                    self.initial_stack = copy.deepcopy(self.triage_stack)
                     return
 
                 if base_cmd == 'n':
@@ -790,10 +1010,10 @@ class DeepWorkCLI:
 
                     effective_cmd = '-' if base_cmd == 'i' else base_cmd
                     marker = {'x': '[x]', '-': '[-]', '>': '[>]'}[effective_cmd]
-                    task_content = re.sub(r'^\[[x\->\s]?\]\s*', '', task['line'])
+                    task_content = re.sub(r'^\[[xe\->\s]?\]\s*', '', task['line'])
                     
                     task['line'] = f"{marker} {task_content}"
-                    task['notes'] = [f"{marker} " + re.sub(r'^\[[x\->\s]?\]\s*', '', n) for n in task['notes']]
+                    task['notes'] = [f"{marker} " + re.sub(r'^\[[xe\->\s]?\]\s*', '', n) for n in task['notes']]
                     
                     self.commit_to_ledger("Work", [self.triage_stack.pop(0)])
                     self.task_start_time = None

@@ -6,7 +6,6 @@
 - **Subnotes and Subtasks while adding New Task** Implement the ability to add subnotes and subtasks while adding a new top-level note in Work or Triage Modes. Could use \n as a delimeter or Shift-Enter to move to a new line.
 - **Search** Implement '/' command to search for matching tasks in the triage stack. This is primarily for verifying whether the user has already entered a matching new task to avoid duplicates.
 - **Mini Timer** Implement 'm#' command to start a new timer function for a top-level task that requires a number of short tasks such as clearing an email inbox or updating case status. Timer would chime once every # minutes.
-- **Meeting Support** Implement time aware tasks that become the focused task during the specified time like 2:00 PM-3:00 PM. Focus Timer is paused during the meeting.
 - **Rename Work Mode to Focus Mode:** Update terminology throughout the app and documentation to use "Focus" instead of "Work".
 - **Selector-based Navigation:** Implement `j/k` for navigation and `CTRL+hjkl` for reordering/indenting in Triage mode, replacing or supplementing the current numbered command system.
 - **Deadline Timer:** Countdown in the Work Mode header for tasks with specific time-of-day deadlines.
@@ -24,3 +23,5 @@
 - **Task Timer vs Focus Timer:** Individual task tracking alongside overall session tracking.
 - **Auditory Feedback:** System chimes for focus limits and break expirations.
 - **Flexible Focus Duration:** The `f` command to adjust focus thresholds on the fly.
+- **Meeting Support:** Time-aware tasks with auto-preemption and meeting timer.
+- **Task Editing ('e'):** Drop to `vi` from Triage or Work mode to edit items.
