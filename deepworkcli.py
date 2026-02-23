@@ -328,6 +328,69 @@ class DeepWorkCLI:
         self.initial_stack = copy.deepcopy(self.triage_stack)
         return True
 
+    def _get_multi_line_input(self):
+        with tempfile.NamedTemporaryFile(suffix=".txt", mode='w+', delete=False) as tf:
+            tf.write("\n# Enter one task or note per line\n")
+            temp_path = tf.name
+
+        try:
+            if self.original_termios:
+                fd = sys.stdin.fileno()
+                termios.tcsetattr(fd, termios.TCSADRAIN, self.original_termios)
+
+            os.system(f"vi +startinsert {temp_path}")
+
+            with open(temp_path, 'r') as f:
+                lines = [l.rstrip() for l in f.readlines() if not l.startswith('#')]
+
+            return lines
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
+    def _process_multi_line_input(self, lines):
+        if not lines:
+            return [], False
+
+        items = []
+        current_item = None
+
+        # Check if all non-empty lines are indented
+        only_indented = all(l.startswith(' ') for l in lines if l.strip())
+
+        if only_indented:
+            if self.mode in ["WORK", "BREAK"] and self.triage_stack:
+                # Add as sub-items to the active task
+                active_task = self.triage_stack[0]
+                added_any = False
+                for l in lines:
+                    if l.strip():
+                        active_task['notes'].append(l.strip())
+                        added_any = True
+                return [], added_any
+            else:
+                # Treat as top-level items
+                for l in lines:
+                    if l.strip():
+                        items.append({'line': l.strip(), 'notes': []})
+                return items, False
+
+        for l in lines:
+            if not l.strip(): continue
+            if not l.startswith(' '):
+                current_item = {'line': l.strip(), 'notes': []}
+                items.append(current_item)
+            else:
+                if current_item:
+                    current_item['notes'].append(l.strip())
+                else:
+                    # Indented line before any top-level item in this batch
+                    # Treat as top-level
+                    current_item = {'line': l.strip(), 'notes': []}
+                    items.append(current_item)
+
+        return items, False
+
     def _edit_item(self, item):
         original_item = copy.deepcopy(item)
 
@@ -780,7 +843,7 @@ class DeepWorkCLI:
         if visible_count == 0:
             print("\n\033[1;36m[FREE WRITE MODE]\033[0m Everything triaged or finished.")
         else:
-            print("\nCmds: [p# #] reorder, [a# #] assign, [e#] edit, [i#] ignore, [N] prioritize, [>>] defer all, [w] work, [q] quit")
+            print("\nCmds: [p# #] reorder, [a# #] assign, [e#] edit, [i#] ignore, [N] prioritize, [n] add, [>>] defer all, [w] work, [q] quit")
 
     def render_work(self):
         if not self.triage_stack:
@@ -870,25 +933,47 @@ class DeepWorkCLI:
                 self.break_start_time = None
                 return
 
-            if base_cmd_orig == 'N' and self.mode in ["WORK", "BREAK", "TRIAGE"]:
-                line = input("Enter prioritized task: ")
-                if not line.strip(): return
+            if base_cmd == 'n' and self.mode in ["WORK", "BREAK", "TRIAGE"]:
+                lines = self._get_multi_line_input()
+                items, added_to_active = self._process_multi_line_input(lines)
 
-                clean = line.strip()
-                clean = re.sub(r'^\[[xe\->\s]?\]\s*', '', clean)
-                item = {'line': f"[] {clean}", 'notes': []}
+                if not items and not added_to_active:
+                    return
 
-                self.commit_to_ledger("Prioritized Task", [item])
-                self.triage_stack.insert(0, item)
-                self.task_start_time = None
+                mode_label = "Prioritized Entry(s)" if base_cmd_orig == 'N' else "New Entry(s)"
+
+                if added_to_active:
+                    self.commit_to_ledger(mode_label, [self.triage_stack[0]])
+                    self.last_msg = "Sub-items Added"
+                else:
+                    self.commit_to_ledger(mode_label, items)
+
+                    # Only add tasks to triage_stack
+                    new_tasks = [it for it in items if it['line'].startswith('[]')]
+
+                    if base_cmd_orig == 'N':
+                        for it in reversed(new_tasks):
+                            self.triage_stack.insert(0, it)
+                        if new_tasks:
+                            self.last_msg = "Task(s) Added & Prioritized"
+                            self.task_start_time = None
+                        else:
+                            self.last_msg = "Note(s) Added"
+
+                        if self.mode == "WORK":
+                            if self.mini_timer_active:
+                                self.mini_timer_remaining = self.mini_timer_duration * 60
+                                self.mini_timer_last_tick = time.time()
+                                self.mini_timer_last_chime_timestamp = 0
+                            self.check_meetings()
+                    else:
+                        self.triage_stack.extend(new_tasks)
+                        if new_tasks:
+                            self.last_msg = "Task(s) Added"
+                        else:
+                            self.last_msg = "Note(s) Added"
+
                 self.initial_stack = copy.deepcopy(self.triage_stack)
-                self.last_msg = "Task Added & Prioritized"
-                if self.mode == "WORK":
-                    if self.mini_timer_active:
-                        self.mini_timer_remaining = self.mini_timer_duration * 60
-                        self.mini_timer_last_tick = time.time()
-                        self.mini_timer_last_chime_timestamp = 0
-                    self.check_meetings()
                 return
 
             if self.mode == "BREAK":
@@ -986,9 +1071,10 @@ class DeepWorkCLI:
 
             elif self.mode in ["WORK", "BREAK"]:
                 if not self.triage_stack:
-                    if base_cmd == 'n' or base_cmd == 'q':
+                    if base_cmd == 'q':
                         return "QUIT"
-                    return
+                    if base_cmd != 'n':
+                        return
 
                 task = self.triage_stack[0]
                 is_note = not task['line'].startswith('[]')
@@ -1066,38 +1152,6 @@ class DeepWorkCLI:
                             self.last_msg = "Mini Timer Started: 2m"
                     return
 
-                if base_cmd == 'n':
-                    line = input("Enter note or task: ")
-                    if not line.strip(): return
-
-                    if line.startswith(' '):
-                        # Sub-item
-                        content = line.strip()
-                        is_subtask = bool(re.match(r'^\[\s?\]', content))
-                        task['notes'].append(content)
-                        self.commit_to_ledger("New Entry", [task])
-                        self.last_msg = "Subtask Added" if is_subtask else "Subnote Added"
-                    else:
-                        # Top-level
-                        clean = line.strip()
-                        marker_match = re.match(r'^\[([x\->\s]?)\]\s*', clean)
-                        is_new_task = False
-                        if marker_match:
-                            state = marker_match.group(1).strip()
-                            if not state:
-                                is_new_task = True
-                                content = clean[marker_match.end():].strip()
-
-                        if is_new_task:
-                            item = {'line': f"[] {content}", 'notes': []}
-                            self.last_msg = "Task Added"
-                        else:
-                            item = {'line': clean, 'notes': []}
-                            self.last_msg = "Note Added"
-
-                        self.commit_to_ledger("New Entry", [item])
-                        self.triage_stack.append(item)
-                    return
 
                 match_x = re.match(r'^x(\d+)', cmd)
                 if match_x:

@@ -45,6 +45,8 @@ Entered by running the script with a filename. It parses the end of the file (af
 - `a <note_idx> <task_idx>`: **Assign.** Moves a note (or task) at `<note_idx>` to be a sub-item of task at `<task_idx>`.
 - `e <idx>`: **Edit.** Opens the item and its sub-items in `vi` for editing.
 - `i <idx>`: **Ignore.** Removes a note from the stack. If it's a task, marks it as cancelled `[-]`.
+- `N`: **Prioritize.** Opens `vi` to add one or more tasks/notes to the top of the stack.
+- `n`: **Add.** Opens `vi` to add one or more tasks/notes to the end of the stack.
 - `w`: **Work.** Commits the triage session and enters Work Mode.
 - `q`: **Quit.** Returns to Free Write (exits the CLI).
 
@@ -66,7 +68,8 @@ Entered by typing `w` from Triage Mode. It displays the top task along with its 
 - `f <mins>` or `f`: **Focus.** Sets/Changes the Focus Timer duration.
 - `m <mins>` or `m`: **Mini Task.** Toggles Mini Task Session mode (default 2 minutes).
 - `[Space]`: **Reset Mini Timer.** When in Mini Task Session mode, resets the timer to its full duration (only works when command buffer is empty).
-- `n`: **Add.** Adds a new top-level task/note or a sub-item (if input starts with a space).
+- `N`: **Prioritize.** Opens `vi` to add one or more tasks/notes to the top of the stack.
+- `n`: **Add.** Opens `vi` to add one or more top-level tasks/notes or sub-items.
 - `b <mins>`: **Break.** Enters Break Mode for specified minutes (default 5).
 - `i`: **Ignore.** Skips the current item (marks as cancelled if it's a task).
 - `t`: **Triage.** Returns to Triage Mode.
@@ -95,7 +98,8 @@ Entered via `b` in Work Mode. Displays inspirational quotes and a countdown.
 The ledger uses the following markers (Timestamp format: `MM/DD/YYYY HH:MM:SS AM/PM`):
 - `------- Triage <Timestamp> -------`
 - `------- Work <Timestamp> -------`
-- `------- New Entry <Timestamp> -------`
+- `------- New Entry(s) <Timestamp> -------`
+- `------- Prioritized Entry(s) <Timestamp> -------`
 - `------- Cancelled <Timestamp> -------`
 - `------- Interrupted <Timestamp> -------`
 - `------- Work Session Complete <Timestamp> -------`
