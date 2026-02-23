@@ -154,9 +154,9 @@ class DeepWorkCLI:
         self.mini_timer_active = False
         self.mini_timer_duration = 2
         self.mini_timer_remaining = 0
-        self.mini_timer_task = None
         self.mini_timer_last_tick = 0
         self.mini_timer_last_chime_timestamp = 0
+        self.mini_timer_was_meeting = False
 
     def get_daily_summary(self):
         counts = {'[x]': 0, '[-]': 0, '[>]': 0}
@@ -418,18 +418,17 @@ class DeepWorkCLI:
         if not self.mini_timer_active:
             return
 
-        if self.mini_timer_task not in self.triage_stack:
-            self.mini_timer_active = False
-            return
-
-        if not self.mini_timer_task['line'].startswith('[]'):
-            self.mini_timer_active = False
-            return
-
         now = time.time()
         is_active_meeting = self.is_meeting_active()
 
-        if self.mode == "WORK" and self.triage_stack and self.triage_stack[0] is self.mini_timer_task and not is_active_meeting:
+        # Reset if transitioning back from a meeting
+        if self.mini_timer_was_meeting and not is_active_meeting:
+            self.mini_timer_remaining = self.mini_timer_duration * 60
+            self.mini_timer_last_tick = now
+            self.mini_timer_last_chime_timestamp = 0
+        self.mini_timer_was_meeting = is_active_meeting
+
+        if self.mode == "WORK" and self.triage_stack and not is_active_meeting:
             if self.mini_timer_last_tick == 0:
                 self.mini_timer_last_tick = now
 
@@ -467,7 +466,6 @@ class DeepWorkCLI:
         else:
             commands.append(["paplay", linux_file])
             commands.append(["play", linux_file])
-            commands.append(["osascript", "-e", "beep"])
 
         for cmd in commands:
             try:
@@ -603,7 +601,7 @@ class DeepWorkCLI:
 
             mini_timer_str = ""
             is_mini_session = False
-            if self.mini_timer_active and self.triage_stack and self.triage_stack[0] is self.mini_timer_task:
+            if self.mini_timer_active and self.triage_stack:
                 if not self.is_meeting_active():
                     is_mini_session = True
                     sign = "-" if self.mini_timer_remaining < 0 else ""
@@ -813,7 +811,7 @@ class DeepWorkCLI:
 
         mini_timer_str = ""
         is_mini_session = False
-        if self.mini_timer_active and self.triage_stack and self.triage_stack[0] is self.mini_timer_task:
+        if self.mini_timer_active and self.triage_stack:
             if not self.is_meeting_active():
                 is_mini_session = True
                 sign = "-" if self.mini_timer_remaining < 0 else ""
@@ -886,6 +884,10 @@ class DeepWorkCLI:
                 self.initial_stack = copy.deepcopy(self.triage_stack)
                 self.last_msg = "Task Added & Prioritized"
                 if self.mode == "WORK":
+                    if self.mini_timer_active:
+                        self.mini_timer_remaining = self.mini_timer_duration * 60
+                        self.mini_timer_last_tick = time.time()
+                        self.mini_timer_last_chime_timestamp = 0
                     self.check_meetings()
                 return
 
@@ -975,10 +977,7 @@ class DeepWorkCLI:
                 elif base_cmd == 'e':
                     idx = int(parts[1]) if len(parts) > 1 else 0
                     if 0 <= idx < len(self.triage_stack):
-                        old_task = self.triage_stack[idx]
                         self.triage_stack[idx] = self._edit_item(self.triage_stack[idx])
-                        if self.mini_timer_task is old_task:
-                            self.mini_timer_task = self.triage_stack[idx]
                         self.initial_stack = copy.deepcopy(self.triage_stack)
 
                 elif base_cmd in ['>', '>>']:
@@ -1034,10 +1033,7 @@ class DeepWorkCLI:
                     return
 
                 if base_cmd == 'e':
-                    old_task = self.triage_stack[0]
                     self.triage_stack[0] = self._edit_item(self.triage_stack[0])
-                    if self.mini_timer_task is old_task:
-                        self.mini_timer_task = self.triage_stack[0]
                     self.initial_stack = copy.deepcopy(self.triage_stack)
                     return
 
@@ -1052,7 +1048,6 @@ class DeepWorkCLI:
                                 self.mini_timer_active = True
                                 self.mini_timer_duration = duration
                                 self.mini_timer_remaining = duration * 60
-                                self.mini_timer_task = task
                                 self.mini_timer_last_tick = time.time()
                                 self.mini_timer_last_chime_timestamp = 0
                                 self.last_msg = f"Mini Timer Started: {duration}m"
@@ -1066,7 +1061,6 @@ class DeepWorkCLI:
                             self.mini_timer_active = True
                             self.mini_timer_duration = 2
                             self.mini_timer_remaining = 2 * 60
-                            self.mini_timer_task = task
                             self.mini_timer_last_tick = time.time()
                             self.mini_timer_last_chime_timestamp = 0
                             self.last_msg = "Mini Timer Started: 2m"
@@ -1112,6 +1106,10 @@ class DeepWorkCLI:
                         return
                     idx = int(match_x.group(1))
                     task['notes'][idx] = re.sub(r'^\[\s?\]', '[x]', task['notes'][idx])
+                    if self.mini_timer_active:
+                        self.mini_timer_remaining = self.mini_timer_duration * 60
+                        self.mini_timer_last_tick = time.time()
+                        self.mini_timer_last_chime_timestamp = 0
                     return
 
                 if is_note and base_cmd in ['x', '-', 'i']:
@@ -1140,6 +1138,10 @@ class DeepWorkCLI:
                     task['notes'] = [f"{marker} " + re.sub(r'^\[[xe\->\s]?\]\s*', '', n) for n in task['notes']]
                     
                     self.commit_to_ledger("Work", [self.triage_stack.pop(0)])
+                    if self.mini_timer_active:
+                        self.mini_timer_remaining = self.mini_timer_duration * 60
+                        self.mini_timer_last_tick = time.time()
+                        self.mini_timer_last_chime_timestamp = 0
                     self.task_start_time = None
                     self.initial_stack = copy.deepcopy(self.triage_stack)
 
