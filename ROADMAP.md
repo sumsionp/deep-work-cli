@@ -3,7 +3,6 @@
 ## UI & Interaction
 - **Add Already Completed Task** Automatically complete top level notes that were entered prepended with '[x]'.
 - **Improved Subnote Formatting** Automatically add '- ' to the beginning of subnotes if it isn't already there to improve markdown formatting of subnotes.
-- **Subnotes and Subtasks while adding New Task** Implement the ability to add subnotes and subtasks while adding a new top-level note in Work or Triage Modes. Could use \n as a delimeter or Shift-Enter to move to a new line.
 - **Search** Implement '/' command to search for matching tasks in the triage stack. This is primarily for verifying whether the user has already entered a matching new task to avoid duplicates.
 - **Rename Work Mode to Focus Mode:** Update terminology throughout the app and documentation to use "Focus" instead of "Work".
 - **Selector-based Navigation:** Implement `j/k` for navigation and `CTRL+hjkl` for reordering/indenting in Triage mode, replacing or supplementing the current numbered command system.
@@ -18,6 +17,7 @@
 - **Improved Deduplication:** Further refine the `load_context` parser to handle complex reordering and nesting edge cases more robustly.
 
 ## Completed Items
+- **Multi-line Task Addition ('n' and 'N'):** Added the ability to enter multiple tasks and notes at once via `vi`, supporting hierarchical sub-items and prioritizing multiple tasks simultaneously.
 - **Prioritized Add (N):** Implement the `N` command in Work mode to add a new task and immediately prioritize it as the active focus.
 - **Task Timer vs Focus Timer:** Individual task tracking alongside overall session tracking.
 - **Auditory Feedback:** System chimes for focus limits and break expirations.
