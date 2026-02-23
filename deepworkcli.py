@@ -151,6 +151,11 @@ class DeepWorkCLI:
         self.last_chime_timestamp = 0
         self.chimed_meetings = set()
         self.original_termios = None
+        self.mini_timer_active = False
+        self.mini_timer_duration = 2
+        self.mini_timer_remaining = 0
+        self.mini_timer_task = None
+        self.mini_timer_last_tick = 0
 
     def get_daily_summary(self):
         counts = {'[x]': 0, '[-]': 0, '[>]': 0}
@@ -408,17 +413,57 @@ class DeepWorkCLI:
                     for n in t['notes']:
                         f.write(f"  {n}\n")
 
-    def play_chime(self):
+    def update_mini_timer(self):
+        if not self.mini_timer_active:
+            return
+
+        if self.mini_timer_task not in self.triage_stack:
+            self.mini_timer_active = False
+            return
+
+        if not self.mini_timer_task['line'].startswith('[]'):
+            self.mini_timer_active = False
+            return
+
+        now = time.time()
+        if self.mode == "WORK" and self.triage_stack and self.triage_stack[0] is self.mini_timer_task:
+            if self.mini_timer_last_tick == 0:
+                self.mini_timer_last_tick = now
+
+            elapsed = now - self.mini_timer_last_tick
+            if elapsed >= 1.0:
+                ticks = int(elapsed)
+                self.mini_timer_remaining -= ticks
+                self.mini_timer_last_tick += ticks
+
+            if self.mini_timer_remaining <= 0:
+                self.play_chime(sound='tick')
+                self.mini_timer_remaining = self.mini_timer_duration * 60
+        else:
+            self.mini_timer_last_tick = now
+
+    def play_chime(self, sound='chime'):
         if CHIME_COMMAND:
             subprocess.Popen(shlex.split(CHIME_COMMAND), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return
 
         # Fallback chain
-        commands = [
-            ["paplay", "/usr/share/sounds/freedesktop/stereo/complete.oga"],
-            ["play", "/usr/share/sounds/freedesktop/stereo/complete.oga"],
-            ["osascript", "-e", "beep"]
-        ]
+        if sound == 'chime':
+            linux_file = "/usr/share/sounds/freedesktop/stereo/complete.oga"
+            macos_file = "/System/Library/Sounds/Glass.aiff"
+        else:
+            # For 'tick', use something sharper/shorter
+            linux_file = "/usr/share/sounds/freedesktop/stereo/bell.oga"
+            macos_file = "/System/Library/Sounds/Tink.aiff"
+
+        commands = []
+        if sys.platform == "darwin":
+            commands.append(["afplay", macos_file])
+            commands.append(["osascript", "-e", "beep"])
+        else:
+            commands.append(["paplay", linux_file])
+            commands.append(["play", linux_file])
+            commands.append(["osascript", "-e", "beep"])
 
         for cmd in commands:
             try:
@@ -545,6 +590,11 @@ class DeepWorkCLI:
                 mm, ms = divmod(abs(remaining), 60)
                 meeting_timer_str = f" | Meeting: {m_sign}{mm:02d}:{ms:02d}"
 
+            mini_timer_str = ""
+            if self.mini_timer_active:
+                mm, ms = divmod(abs(self.mini_timer_remaining), 60)
+                mini_timer_str = f" | Mini: {mm:02d}:{ms:02d}"
+
             color = "\033[1;34m"
             header = " DEEP WORK SESSION "
             if focus_elapsed > self.focus_threshold:
@@ -552,7 +602,7 @@ class DeepWorkCLI:
                 header = " !!! FOCUS LIMIT EXCEEDED !!! "
 
             sys.stdout.write("\033[1;1H" + f"{color}{'='*65}\033[0m")
-            sys.stdout.write("\033[2;1H" + f"{color}{header}\033[0m | Task: {tm:02d}:{ts:02d} | Focus: {f_sign}{fm:02d}:{fs:02d}{meeting_timer_str}")
+            sys.stdout.write("\033[2;1H" + f"{color}{header}\033[0m | Task: {tm:02d}:{ts:02d} | Focus: {f_sign}{fm:02d}:{fs:02d}{meeting_timer_str}{mini_timer_str}")
             sys.stdout.write("\033[3;1H" + f"{color}{'='*65}\033[0m")
         elif self.mode == "BREAK":
             elapsed_break = time.time() - self.break_start_time
@@ -644,6 +694,7 @@ class DeepWorkCLI:
 
                 if self.mode == "WORK":
                     self.check_meetings()
+                    self.update_mini_timer()
 
                 rlist, _, _ = select.select([sys.stdin], [], [], 0.1)
                 if rlist:
@@ -740,6 +791,11 @@ class DeepWorkCLI:
             mm, ms = divmod(abs(remaining), 60)
             meeting_timer_str = f" | Meeting: {m_sign}{mm:02d}:{ms:02d}"
 
+        mini_timer_str = ""
+        if self.mini_timer_active:
+            mm, ms = divmod(abs(self.mini_timer_remaining), 60)
+            mini_timer_str = f" | Mini: {mm:02d}:{ms:02d}"
+
         color = "\033[1;34m"
         header = " DEEP WORK SESSION "
         if focus_elapsed > self.focus_threshold:
@@ -748,7 +804,7 @@ class DeepWorkCLI:
 
         is_task = t['line'].startswith('[]')
         print(color + "="*65 + "\033[0m")
-        print(f"{color}{header}\033[0m | Task: {tm:02d}:{ts:02d} | Focus: {f_sign}{fm:02d}:{fs:02d}{meeting_timer_str}")
+        print(f"{color}{header}\033[0m | Task: {tm:02d}:{ts:02d} | Focus: {f_sign}{fm:02d}:{fs:02d}{meeting_timer_str}{mini_timer_str}")
         print(color + "="*65 + "\033[0m")
         
         display_line = re.sub(r'^\[\s?\]\s*', '', t['line'])
@@ -816,6 +872,9 @@ class DeepWorkCLI:
                         self.task_start_time += break_total_time
                     self.focus_start_time = now
                     self.mode = "WORK"
+                    if self.mini_timer_active:
+                        self.mini_timer_remaining = self.mini_timer_duration * 60
+                        self.mini_timer_last_tick = now
                     self.commit_to_ledger("Work Session Re-started at", [])
                     self.last_msg = "Work Resumed"
                     self.last_chime_timestamp = 0
@@ -888,7 +947,10 @@ class DeepWorkCLI:
                 elif base_cmd == 'e':
                     idx = int(parts[1]) if len(parts) > 1 else 0
                     if 0 <= idx < len(self.triage_stack):
+                        old_task = self.triage_stack[idx]
                         self.triage_stack[idx] = self._edit_item(self.triage_stack[idx])
+                        if self.mini_timer_task is old_task:
+                            self.mini_timer_task = self.triage_stack[idx]
                         self.initial_stack = copy.deepcopy(self.triage_stack)
 
                 elif base_cmd in ['>', '>>']:
@@ -944,8 +1006,40 @@ class DeepWorkCLI:
                     return
 
                 if base_cmd == 'e':
+                    old_task = self.triage_stack[0]
                     self.triage_stack[0] = self._edit_item(self.triage_stack[0])
+                    if self.mini_timer_task is old_task:
+                        self.mini_timer_task = self.triage_stack[0]
                     self.initial_stack = copy.deepcopy(self.triage_stack)
+                    return
+
+                if base_cmd == 'm' and self.mode == "WORK":
+                    if len(parts) > 1:
+                        try:
+                            duration = int(parts[1])
+                            if duration <= 0:
+                                self.mini_timer_active = False
+                                self.last_msg = "Mini Timer Stopped"
+                            else:
+                                self.mini_timer_active = True
+                                self.mini_timer_duration = duration
+                                self.mini_timer_remaining = duration * 60
+                                self.mini_timer_task = task
+                                self.mini_timer_last_tick = time.time()
+                                self.last_msg = f"Mini Timer Started: {duration}m"
+                        except ValueError:
+                            self.last_msg = f"Invalid mini timer duration: {parts[1]}"
+                    else:
+                        if self.mini_timer_active:
+                            self.mini_timer_active = False
+                            self.last_msg = "Mini Timer Stopped"
+                        else:
+                            self.mini_timer_active = True
+                            self.mini_timer_duration = 2
+                            self.mini_timer_remaining = 2 * 60
+                            self.mini_timer_task = task
+                            self.mini_timer_last_tick = time.time()
+                            self.last_msg = "Mini Timer Started: 2m"
                     return
 
                 if base_cmd == 'n':
