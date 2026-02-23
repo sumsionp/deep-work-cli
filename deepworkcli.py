@@ -591,7 +591,7 @@ class DeepWorkCLI:
                 meeting_timer_str = f" | Meeting: {m_sign}{mm:02d}:{ms:02d}"
 
             mini_timer_str = ""
-            if self.mini_timer_active:
+            if self.mini_timer_active and self.triage_stack and self.triage_stack[0] is self.mini_timer_task:
                 mm, ms = divmod(abs(self.mini_timer_remaining), 60)
                 mini_timer_str = f" | Mini: {mm:02d}:{ms:02d}"
 
@@ -792,7 +792,7 @@ class DeepWorkCLI:
             meeting_timer_str = f" | Meeting: {m_sign}{mm:02d}:{ms:02d}"
 
         mini_timer_str = ""
-        if self.mini_timer_active:
+        if self.mini_timer_active and self.triage_stack and self.triage_stack[0] is self.mini_timer_task:
             mm, ms = divmod(abs(self.mini_timer_remaining), 60)
             mini_timer_str = f" | Mini: {mm:02d}:{ms:02d}"
 
