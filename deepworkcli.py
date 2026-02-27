@@ -530,6 +530,36 @@ class DeepWorkCLI:
 
         return False
 
+    def _get_path_pruned_item(self, item, path, leaf_item=None):
+        """Returns a copy of item with hierarchy pruned to only show the path to focus."""
+        if not path:
+            return copy.deepcopy(leaf_item if leaf_item else item)
+
+        new_item = copy.deepcopy(item)
+        idx = path[0]
+        sub_item, end_idx = self._get_subtask_as_item(new_item, idx)
+
+        pruned_sub = self._get_path_pruned_item(sub_item, path[1:], leaf_item)
+
+        # Rebuild notes: keep non-task notes and the path-relevant subtask
+        new_notes = []
+        current_idx = 0
+        while current_idx < len(item['notes']):
+            if current_idx == idx:
+                new_notes.append(pruned_sub['line'])
+                for sn in pruned_sub['notes']:
+                    new_notes.append(f"  {sn}")
+                _, next_idx = self._get_subtask_as_item(item, current_idx)
+                current_idx = next_idx
+            else:
+                line = item['notes'][current_idx]
+                if not re.match(r'^(\s*)\[([xe\->\s]?)\]\s*', line):
+                    new_notes.append(line)
+                current_idx += 1
+
+        new_item['notes'] = new_notes
+        return new_item
+
     def commit_to_ledger(self, mode_label, items, target_file=None):
         dest = target_file if target_file else FILENAME
         with open(dest, 'a') as f:
@@ -941,20 +971,23 @@ class DeepWorkCLI:
         # Handle "Task Started" ledger entry
         focus_id = focus_item['line']
         if focus_id != self.last_recorded_focus:
-            item_to_record = copy.deepcopy(focus_item)
-            # Remove subtasks from the starting record to match user example
-            item_to_record['notes'] = [n for n in item_to_record['notes'] if not re.match(r'^\[[xe\->\s]?\]', n)]
-
-            if parent_item:
-                parent_to_record = copy.deepcopy(parent_item)
-                # Keep only the current focused subtask (without its own notes yet) in the parent's notes
-                parent_to_record['notes'] = [focus_item['line']]
-                # Ensure the parent line itself has [] for ledger if it's a task
-                if not parent_to_record['line'].startswith('[]'):
-                    parent_to_record['line'] = f"[] {parent_to_record['line']}"
-                self.commit_to_ledger("Task Started", [parent_to_record])
-            else:
+            if not focus_path:
+                item_to_record = copy.deepcopy(focus_item)
+                item_to_record['notes'] = [n for n in item_to_record['notes'] if not re.match(r'^\[[xe\->\s]?\]', n)]
                 self.commit_to_ledger("Task Started", [item_to_record])
+            else:
+                # Build full path from top for ledger context
+                item_to_record = copy.deepcopy(focus_item)
+                item_to_record['notes'] = [n for n in item_to_record['notes'] if not re.match(r'^\[[xe\->\s]?\]', n)]
+
+                hierarchical_context = self._get_path_pruned_item(top_task, focus_path, item_to_record)
+                # Ensure root of this context is marked pending
+                if not hierarchical_context['line'].startswith('[]'):
+                     hierarchical_context['line'] = re.sub(r'^(\s*)\[([xe\->\s]?)\]\s*', r'\1[] ', hierarchical_context['line'])
+                     if not hierarchical_context['line'].strip().startswith('[]'):
+                         hierarchical_context['line'] = f"[] {hierarchical_context['line'].lstrip()}"
+
+                self.commit_to_ledger("Task Started", [hierarchical_context])
             self.last_recorded_focus = focus_id
 
         t = focus_item
@@ -1329,20 +1362,23 @@ class DeepWorkCLI:
                     resolved_item = self._prepare_task_with_markers(focus_item, marker, marker)
                     
                     if not focus_path:
-                        self.commit_to_ledger(ledger_label, [self.triage_stack.pop(0)])
+                        item_to_record = self.triage_stack.pop(0)
+                        # Ensure we commit the RESOLVED version
+                        resolved_top = self._prepare_task_with_markers(item_to_record, marker, marker)
+                        self.commit_to_ledger(ledger_label, [resolved_top])
                     else:
                         self._update_recursive_item(top_task, focus_path, resolved_item)
-                        # When a sub-item is resolved, record it and its parent
-                        if parent_item:
-                            parent_to_record = copy.deepcopy(parent_item)
-                            # Keep only the resolved subtask in parent notes
-                            parent_to_record['notes'] = [resolved_item['line']]
-                            # Ensure parent is marked pending for context in the resolved entry too
-                            if not parent_to_record['line'].startswith('[]'):
-                                parent_to_record['line'] = f"[] {parent_to_record['line']}"
-                            self.commit_to_ledger(ledger_label, [parent_to_record])
-                        else:
-                            self.commit_to_ledger(ledger_label, [resolved_item])
+                        # Build full path from top for ledger context
+                        hierarchical_context = self._get_path_pruned_item(top_task, focus_path, resolved_item)
+
+                        # Ensure root of this context is marked pending if it's not the focused item
+                        if not hierarchical_context['line'].startswith('[]') and not focus_path == []:
+                             # Use regex to replace/add marker
+                             hierarchical_context['line'] = re.sub(r'^(\s*)\[([xe\->\s]?)\]\s*', r'\1[] ', hierarchical_context['line'])
+                             if not hierarchical_context['line'].strip().startswith('[]'):
+                                 hierarchical_context['line'] = f"[] {hierarchical_context['line'].lstrip()}"
+
+                        self.commit_to_ledger(ledger_label, [hierarchical_context])
 
                     if self.mini_timer_active:
                         self.mini_timer_remaining = self.mini_timer_duration * 60
