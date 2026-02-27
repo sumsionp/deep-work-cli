@@ -333,9 +333,12 @@ class DeepWorkCLI:
         self.initial_stack = copy.deepcopy(self.triage_stack)
         return True
 
-    def _get_multi_line_input(self):
+    def _get_multi_line_input(self, context_lines=None):
         with tempfile.NamedTemporaryFile(suffix=".txt", mode='w+', delete=False) as tf:
             tf.write("\n# Enter one task or note per line\n")
+            if context_lines:
+                for cl in context_lines:
+                    tf.write(f"# {cl}\n")
             temp_path = tf.name
 
         try:
@@ -1085,7 +1088,7 @@ class DeepWorkCLI:
         
         if parent_item:
             parent_display = re.sub(r'^\[\s?\]\s*', '', parent_item['line'])
-            print(f"\n\033[1;34mHEADER >> {parent_display}\033[0m")
+            print(f"\n\033[1;34mPARENT TASK >> {parent_display}\033[0m")
 
         display_line = re.sub(r'^\[\s?\]\s*', '', t['line'])
         if is_task:
@@ -1129,7 +1132,22 @@ class DeepWorkCLI:
                 return
 
             if base_cmd == 'n' and self.mode in ["WORK", "BREAK", "TRIAGE"]:
-                lines = self._get_multi_line_input()
+                context = None
+                if self.mode in ["WORK", "BREAK"] and self.triage_stack:
+                    top_task = self.triage_stack[0]
+                    focus_item, _, focus_path = self._get_recursive_focus(top_task)
+
+                    # Build hierarchical context lines
+                    context = []
+                    context.append(top_task['line'])
+                    curr = top_task
+                    for i, idx in enumerate(focus_path):
+                        sub, _ = self._get_subtask_as_item(curr, idx)
+                        indent = "  " * (i + 1)
+                        context.append(f"{indent}{sub['line']}")
+                        curr = sub
+
+                lines = self._get_multi_line_input(context_lines=context)
                 items, only_indented = self._process_multi_line_input(lines)
 
                 if not items:
