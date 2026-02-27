@@ -508,15 +508,16 @@ class DeepWorkCLI:
 
         now = time.time()
         is_active_meeting = self.is_meeting_active()
+        suppress_mini = is_active_meeting and not self.subtask_mode
 
-        # Reset if transitioning back from a meeting
-        if self.mini_timer_was_meeting and not is_active_meeting:
+        # Reset if transitioning back from a meeting (if it was suppressed)
+        if self.mini_timer_was_meeting and not suppress_mini:
             self.mini_timer_remaining = self.mini_timer_duration * 60
             self.mini_timer_last_tick = now
             self.mini_timer_last_chime_timestamp = 0
-        self.mini_timer_was_meeting = is_active_meeting
+        self.mini_timer_was_meeting = suppress_mini
 
-        if self.mode == "WORK" and self.triage_stack and not is_active_meeting:
+        if self.mode == "WORK" and self.triage_stack and not suppress_mini:
             if self.mini_timer_last_tick == 0:
                 self.mini_timer_last_tick = now
 
@@ -690,7 +691,7 @@ class DeepWorkCLI:
             mini_timer_str = ""
             is_mini_session = False
             if self.mini_timer_active and self.triage_stack:
-                if not self.is_meeting_active():
+                if not self.is_meeting_active() or self.subtask_mode:
                     is_mini_session = True
                     sign = "-" if self.mini_timer_remaining < 0 else ""
                     mm, ms = divmod(abs(self.mini_timer_remaining), 60)
@@ -909,7 +910,7 @@ class DeepWorkCLI:
         mini_timer_str = ""
         is_mini_session = False
         if self.mini_timer_active and self.triage_stack:
-            if not self.is_meeting_active():
+            if not self.is_meeting_active() or self.subtask_mode:
                 is_mini_session = True
                 sign = "-" if self.mini_timer_remaining < 0 else ""
                 mm, ms = divmod(abs(self.mini_timer_remaining), 60)
