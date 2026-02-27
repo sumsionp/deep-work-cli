@@ -567,8 +567,7 @@ class DeepWorkCLI:
 
             self.commit_to_ledger(mode_label, [top_task])
             # Update focus tracking to avoid redundant "Task Started" log
-            new_focus, _, _ = self._get_recursive_focus(top_task)
-            self.last_recorded_focus = new_focus['line']
+            self.last_recorded_focus = top_task['line']
             return True
 
         elif self.mode == "TRIAGE":
@@ -1033,7 +1032,7 @@ class DeepWorkCLI:
         focus_item, parent_item, focus_path = self._get_recursive_focus(top_task)
 
         # Handle "Task Started" ledger entry
-        focus_id = focus_item['line']
+        focus_id = top_task['line']
         if focus_id != self.last_recorded_focus:
             if not focus_path:
                 item_to_record = copy.deepcopy(focus_item)
@@ -1149,8 +1148,7 @@ class DeepWorkCLI:
                         self.task_start_time = None
                         if new_tasks:
                             # Update focus tracking to the newly prioritized task
-                            new_focus, _, _ = self._get_recursive_focus(new_tasks[0])
-                            self.last_recorded_focus = new_focus['line']
+                            self.last_recorded_focus = self.triage_stack[0]['line']
                         else:
                             self.last_recorded_focus = None
                     else:
