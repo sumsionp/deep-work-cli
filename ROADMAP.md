@@ -27,3 +27,4 @@
 - **Meeting Support:** Time-aware tasks with auto-preemption and meeting timer.
 - **Task Editing ('e'):** Drop to `vi` from Triage or Work mode to edit items.
 - **Mini Task Session (m#):** Implement a manual-reset repeating timer for rapid completion of small focus items.
+- **Automatic Hierarchical Focus:** Automatically drill down into subtasks and sub-sub-tasks, focusing on the deepest pending items one at a time.
