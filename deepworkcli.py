@@ -190,7 +190,7 @@ class DeepWorkCLI:
             return
 
         now = datetime.now()
-        active_meeting = None
+        active_meetings = []
         other_tasks = []
         inactive_meetings = []
 
@@ -198,11 +198,7 @@ class DeepWorkCLI:
             m_time = parse_meeting_time(item['line'])
             if m_time:
                 if m_time[0] <= now < m_time[1]:
-                    if not active_meeting:
-                        active_meeting = item
-                    else:
-                        # If there's already an active meeting, treat this one as inactive
-                        inactive_meetings.append((m_time[0], item))
+                    active_meetings.append(item)
                 else:
                     inactive_meetings.append((m_time[0], item))
             else:
@@ -212,14 +208,7 @@ class DeepWorkCLI:
         inactive_meetings.sort(key=lambda x: x[0])
         sorted_inactive = [m[1] for m in inactive_meetings]
 
-        new_stack = []
-        if active_meeting:
-            new_stack.append(active_meeting)
-
-        new_stack.extend(other_tasks)
-        new_stack.extend(sorted_inactive)
-
-        self.triage_stack = new_stack
+        self.triage_stack = active_meetings + other_tasks + sorted_inactive
 
     def load_context(self):
         """Whole-file aware parser with resolution logic. Resolutions are [x], [-], [>], and [e]."""
