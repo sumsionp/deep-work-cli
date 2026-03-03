@@ -1076,7 +1076,7 @@ class DeepWorkCLI:
                         cmd = buffer.strip()
                         buffer = ""
 
-                        if not cmd:
+                        if not cmd and self.mode != "EXIT":
                             last_mode = None # Force redraw on empty enter
                             continue
 
@@ -1159,7 +1159,7 @@ class DeepWorkCLI:
         print(f"  Cancelled [-]: {summary['[-]']}")
         print(f"  Deferred  [>]: {summary['[>]']}")
         print("="*35)
-        self.last_msg = "Press Enter to quit, or 'f' to return to Free Write..."
+        self.last_msg = "Enter 'q' to quit or 'f' to return to Free Write..."
 
     def render_work(self):
         if not self.triage_stack:
@@ -1255,7 +1255,7 @@ class DeepWorkCLI:
             parts = cmd_clean.split()
 
             if self.mode == "EXIT":
-                if not parts:
+                if not parts or parts[0].lower() == 'q':
                     return "QUIT"
                 if parts[0].lower() == 'f':
                     self.enter_free_write()
