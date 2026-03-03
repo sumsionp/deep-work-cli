@@ -25,30 +25,33 @@ Supported formats:
 The program has three modes: **Free Write**, **Triage**, and **Work**.
 
 ### 1. Free Write Mode
-Entered by opening your journal file in a text editor (like `vi`). This is where you enter notes and tasks freely.
+The program automatically starts in Free Write mode upon launch. It appends a `------- Free Write ... -------` marker to your daily journal file and opens it in `vi`. This is where you enter notes and tasks freely. Once you save and exit the editor (`:wq`), you will be dropped into Triage Mode.
 
-#### Vim Integration
-To integrate seamlessly with `vi`, add the following to your `.vimrc`:
-```vim
-" Press F5 to save and open current file in DeepWorkCLI
-map <F5> :w<CR>:!python3 ~/projects/deep-work-cli/deepworkcli.py "%"<CR>
-set autoread
-" Trigger autoread when changing buffers or focusing vim
-autocmd FocusGained,BufEnter,CursorHold,CursorHoldI * if mode() != 'c' | checktime | endif
+#### Program Launch
+For the best experience, add an alias to your shell configuration (e.g., `~/.alias` or `~/.bashrc`):
+```bash
+alias focus='python3 ~/projects/deep-work-cli/deepworkcli.py'
 ```
+Running `focus` will start your session in the daily file (e.g., `YYYYMMDD-plan.txt`).
 
 ### 2. Triage Mode
-Entered by running the script with a filename. It parses the end of the file (after the last marker) for new notes and pending tasks.
+Entered automatically after the initial Free Write session or by using the `t` command. It parses the end of the file for new notes and pending tasks.
+
+**Features:**
+- **Smart Sorting:** Meetings are automatically moved to the bottom in chronological order, while currently active meetings stay at the top.
+- **Focus Timer:** The session timer is integrated into the header and counts down in real-time. It turns red if the focus limit is exceeded.
 
 **Commands:**
 - `p <src> <dest>`: **Prioritize/Reorder.** Moves item at index `<src>` to `<dest>`.
 - `a <note_idx> <task_idx>`: **Assign.** Moves a note (or task) at `<note_idx>` to be a sub-item of task at `<task_idx>`.
 - `e <idx>`: **Edit.** Opens the item and its sub-items in `vi` for editing.
+- `f`: **Free Write.** Appends a Free Write marker and opens the journal file in `vi`.
 - `i <idx>`: **Ignore.** Removes a note from the stack. If it's a task, marks it as cancelled `[-]`.
 - `N`: **Prioritize.** Opens `vi` to add one or more tasks/notes to the top of the stack.
 - `n`: **Add.** Opens `vi` to add one or more tasks/notes to the end of the stack.
+- `b <mins>`: **Break.** Enters Break Mode.
 - `w`: **Work.** Commits the triage session and enters Work Mode.
-- `q`: **Quit.** Returns to Free Write (exits the CLI).
+- `q`: **Quit.** Exits the CLI.
 
 ### 3. Work Mode
 Entered by typing `w` from Triage Mode. It displays the top task along with its associated notes and subtasks.
@@ -66,7 +69,7 @@ Entered by typing `w` from Triage Mode. It displays the top task along with its 
 - `e`: **Edit.** Opens the current focused item and its nested sub-items in `vi` for editing.
 - `-`: **Cancel.** Marks the current focused item as cancelled `[-]`.
 - `>`: **Defer.** Marks the focused item as deferred `[>]` and appends it as a top-level task to a tomorrow-plan.txt file. (Also resets the Mini Timer if active).
-- `f <mins>` or `f`: **Focus.** Sets/Changes the Focus Timer duration.
+- `f`: **Free Write.** Appends a Free Write marker and opens the journal file in `vi`. After editing, you return to Triage Mode.
 - `m <mins>` or `m`: **Mini Task.** Toggles Mini Task Session mode (default 2 minutes).
 - `[Space]`: **Reset Mini Timer.** When in Mini Task Session mode, resets the timer to its full duration (only works when command buffer is empty).
 - `N`: **Prioritize.** Opens `vi` to add tasks/notes. If input is indented, they are prioritized hierarchically before the current focus. Otherwise, they go to the top of the stack.
@@ -97,6 +100,8 @@ Entered via `b` in Work Mode. Displays inspirational quotes and a countdown.
 
 ## Markers
 The ledger uses the following markers (Timestamp format: `MM/DD/YYYY HH:MM:SS AM/PM`):
+- `------- Free Write <Timestamp> -------`
+- `------- Triage Session Started at <Timestamp> -------`
 - `------- Triage <Timestamp> -------`
 - `------- Work <Timestamp> -------`
 - `------- New Entry(s) <Timestamp> -------`
