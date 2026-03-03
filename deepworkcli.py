@@ -185,20 +185,20 @@ class DeepWorkCLI:
                         seen_tasks.add(content)
         return counts
 
+    def _run_with_vi(self, args):
+        """Spawns vi with terminal state management."""
+        fd = sys.stdin.fileno()
+        if self.original_termios:
+            termios.tcsetattr(fd, termios.TCSADRAIN, self.original_termios)
+        subprocess.run(["vi"] + args)
+        tty.setcbreak(fd)
+
     def enter_free_write(self):
         """Appends Free Write marker, launches vi, reloads context, and sorts the stack."""
         with open(FILENAME, 'a') as f:
             f.write(f"\n------- Free Write {get_timestamp()} -------\n\n")
 
-        # Restore terminal settings before vi
-        fd = sys.stdin.fileno()
-        if self.original_termios:
-            termios.tcsetattr(fd, termios.TCSADRAIN, self.original_termios)
-
-        subprocess.run(["vi", "+$", "+startinsert", FILENAME])
-
-        # Re-apply cbreak after vi
-        tty.setcbreak(fd)
+        self._run_with_vi(["+$", "+startinsert", FILENAME])
 
         self.mode = "TRIAGE"
         self.commit_to_ledger("Triage Session Started at", [])
@@ -398,11 +398,7 @@ class DeepWorkCLI:
             temp_path = tf.name
 
         try:
-            if self.original_termios:
-                fd = sys.stdin.fileno()
-                termios.tcsetattr(fd, termios.TCSADRAIN, self.original_termios)
-
-            subprocess.run(["vi", "+startinsert", temp_path])
+            self._run_with_vi(["+startinsert", temp_path])
 
             with open(temp_path, 'r') as f:
                 lines = [l.rstrip() for l in f.readlines() if not l.startswith('#')]
@@ -454,12 +450,7 @@ class DeepWorkCLI:
             temp_path = tf.name
 
         try:
-            # We must restore terminal settings before calling vi
-            if self.original_termios:
-                fd = sys.stdin.fileno()
-                termios.tcsetattr(fd, termios.TCSADRAIN, self.original_termios)
-
-            subprocess.run(["vi", temp_path])
+            self._run_with_vi([temp_path])
 
             with open(temp_path, 'r') as f:
                 new_lines = [l.rstrip() for l in f.readlines() if l.strip()]
@@ -1079,12 +1070,14 @@ class DeepWorkCLI:
                     elif char == '\n' or char == '\r':
                         cmd = buffer.strip()
                         buffer = ""
-                        termios.tcsetattr(fd, termios.TCSADRAIN, self.original_termios)
+
+                        if not cmd:
+                            last_mode = None # Force redraw on empty enter
+                            continue
+
                         print()
                         result = self.handle_command(cmd)
-                        if result == "REDRAW":
-                            last_mode = None
-                            continue
+
                         if result == "QUIT":
                             summary = self.get_daily_summary()
                             print("\n" + "="*35)
@@ -1097,16 +1090,14 @@ class DeepWorkCLI:
                             sys.stdout.write("\nPress Enter to quit, or 'f' to return to Free Write... ")
                             sys.stdout.flush()
 
-                            # Wait for input
-                            tty.setcbreak(fd)
                             should_continue = False
                             while True:
-                                rlist, _, _ = select.select([sys.stdin], [], [], 0.1)
-                                if rlist:
-                                    char = sys.stdin.read(1).lower()
-                                    if char in ['\n', '\r']:
+                                rlist_sub, _, _ = select.select([sys.stdin], [], [], 0.1)
+                                if rlist_sub:
+                                    sub_char = sys.stdin.read(1).lower()
+                                    if sub_char in ['\n', '\r']:
                                         return "QUIT"
-                                    elif char == 'f':
+                                    elif sub_char == 'f':
                                         self.enter_free_write()
                                         should_continue = True
                                         break
@@ -1115,6 +1106,11 @@ class DeepWorkCLI:
                                 last_mode = None # Force structural change redraw
                                 continue
                             break
+
+                        # For all other results (None, REDRAW, etc)
+                        if result == "REDRAW":
+                            last_mode = None
+                        continue
                     elif char in ['\x7f', '\x08']:
                         buffer = buffer[:-1]
                     elif ord(char) == 3: # Ctrl+C
@@ -1274,8 +1270,14 @@ class DeepWorkCLI:
             if base_cmd == 'q':
                 active = self.triage_stack
                 if active:
+                    # Restore terminal for input()
+                    fd = sys.stdin.fileno()
+                    if self.original_termios:
+                        termios.tcsetattr(fd, termios.TCSADRAIN, self.original_termios)
                     print(f"\n\033[1;33m[!] Session Interrupted.\033[0m")
-                    if input("Rescue remaining tasks to Free Write? (y/n): ").lower() == 'y':
+                    res = input("Rescue remaining tasks to Free Write? (y/n): ").lower()
+                    tty.setcbreak(fd)
+                    if res == 'y':
                         self.commit_to_ledger("Interrupted", active)
                     else:
                         self.commit_to_ledger("Interrupted", [])
