@@ -1037,6 +1037,8 @@ class DeepWorkCLI:
                         self.render_work()
                     elif self.mode == "BREAK":
                         self.render_break()
+                    elif self.mode == "EXIT":
+                        self.render_exit()
 
                     print(f"\n\033[90mStatus: {self.last_msg}\033[0m")
                     sys.stdout.write(f"\033[1;37m>> \033[0m{buffer}")
@@ -1084,33 +1086,7 @@ class DeepWorkCLI:
                         result = self.handle_command(cmd)
 
                         if result == "QUIT":
-                            summary = self.get_daily_summary()
-                            print("\n" + "="*35)
-                            print(f"\033[1;32mDAILY SCORECARD ({os.path.basename(FILENAME)})\033[0m")
-                            print(f"  Finished  [x]: {summary['[x]']}")
-                            print(f"  Cancelled [-]: {summary['[-]']}")
-                            print(f"  Deferred  [>]: {summary['[>]']}")
-                            print("="*35)
-
-                            sys.stdout.write("\nPress Enter to quit, or 'f' to return to Free Write... ")
-                            sys.stdout.flush()
-
-                            should_continue = False
-                            while True:
-                                rlist_sub, _, _ = select.select([sys.stdin], [], [], 0.1)
-                                if rlist_sub:
-                                    sub_char = sys.stdin.read(1).lower()
-                                    if sub_char in ['\n', '\r']:
-                                        print()
-                                        return "QUIT"
-                                    elif sub_char == 'f':
-                                        self.enter_free_write()
-                                        should_continue = True
-                                        break
-
-                            if should_continue:
-                                last_mode = None # Force structural change redraw
-                                continue
+                            print() # Ensure newline for shell prompt
                             break
 
                         # For all other results (None, REDRAW, etc)
@@ -1175,6 +1151,15 @@ class DeepWorkCLI:
             print("\n\033[1;36m[FREE WRITE MODE]\033[0m Everything triaged or finished.")
         else:
             print("\nCmds: [p# #] reorder, [a# #] assign, [e#] edit, [f] free write, [i#] ignore, [N] prioritize, [n] add, [>>] defer all, [b#] break, [w] work, [q] quit")
+
+    def render_exit(self):
+        summary = self.get_daily_summary()
+        print(f"\n\033[1;32mDAILY SCORECARD ({os.path.basename(FILENAME)})\033[0m")
+        print(f"  Finished  [x]: {summary['[x]']}")
+        print(f"  Cancelled [-]: {summary['[-]']}")
+        print(f"  Deferred  [>]: {summary['[>]']}")
+        print("="*35)
+        self.last_msg = "Press Enter to quit, or 'f' to return to Free Write..."
 
     def render_work(self):
         if not self.triage_stack:
@@ -1268,6 +1253,15 @@ class DeepWorkCLI:
         try:
             cmd_clean = re.sub(r'^([a-zA-Z])(\d)', r'\1 \2', cmd)
             parts = cmd_clean.split()
+
+            if self.mode == "EXIT":
+                if not parts:
+                    return "QUIT"
+                if parts[0].lower() == 'f':
+                    self.enter_free_write()
+                    return "REDRAW"
+                return
+
             if not parts: return
             base_cmd_orig = parts[0]
             base_cmd = base_cmd_orig.lower()
@@ -1288,11 +1282,11 @@ class DeepWorkCLI:
                         self.commit_to_ledger("Interrupted", [])
                 else:
                     if self.mode in ["WORK", "BREAK"]:
-                        print(f"\n\033[1;32m[+] Work Session Complete.\033[0m")
                         self.commit_to_ledger("Work Session Complete", [])
                     else:
                         self.commit_to_ledger("Triage", [])
-                return "QUIT"
+                self.mode = "EXIT"
+                return "REDRAW"
 
             if base_cmd == 't': 
                 self.commit_to_ledger("Triage Session Started at", [])
@@ -1624,7 +1618,8 @@ class DeepWorkCLI:
 
                     if not self.triage_stack and self.mode == "WORK":
                         self.commit_to_ledger("Work Session Complete", [])
-                        return "QUIT"
+                        self.mode = "EXIT"
+                        return "REDRAW"
 
         except Exception as e:
             self.last_msg = f"Error: {e}"
