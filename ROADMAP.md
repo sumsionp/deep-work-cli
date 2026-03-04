@@ -15,7 +15,6 @@
 - **Session Markers:** Implement markers for `Free Write Session` to better segment purely editorial time.
 
 ## Fixes & Polish
-- **SIGINT Rescue:** Ensure that exiting via `Ctrl+C` (SIGINT) also triggers a rescue append of pending tasks, similar to the `q` command.
 - **Improved Deduplication:** Further refine the `load_context` parser to handle complex reordering and nesting edge cases more robustly.
 
 ## Completed Items
@@ -28,3 +27,4 @@
 - **Task Editing ('e'):** Drop to `vi` from Triage or Work mode to edit items.
 - **Mini Task Session (m#):** Implement a manual-reset repeating timer for rapid completion of small focus items.
 - **Automatic Hierarchical Focus:** Automatically drill down into subtasks and sub-sub-tasks, focusing on the deepest pending items one at a time.
+- **Automated Stack Rescue (SIGINT/SIGTERM):** Implemented signal handlers to automatically rescue the current triage stack to the ledger when the process is interrupted or terminated.
