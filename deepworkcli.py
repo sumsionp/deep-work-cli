@@ -363,6 +363,7 @@ class DeepWorkCLI:
 
             if target_res == "today":
                 self.commit_to_ledger("Deferred", ledger_items)
+                self.commit_to_ledger("Deferred to Today", target_items)
                 self.triage_stack.extend(target_items)
                 self.last_msg = f"Deferred {count} items to end of today's stack"
             else:
@@ -374,6 +375,7 @@ class DeepWorkCLI:
             l_task, t_task, res = self._prepare_defer_tasks(task, target_date)
             if res == "today":
                 self.commit_to_ledger("Deferred", [l_task])
+                self.commit_to_ledger("Deferred to Today", [t_task])
                 self.triage_stack.append(t_task)
                 self.last_msg = "Deferred to end of today's stack"
             else:
