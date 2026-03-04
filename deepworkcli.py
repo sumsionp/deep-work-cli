@@ -9,6 +9,7 @@ import random
 import select
 import termios
 import tty
+import signal
 import subprocess
 import shlex
 import tempfile
@@ -706,6 +707,13 @@ class DeepWorkCLI:
             it_copy['indent'] = max(0, it['indent'] - 2)
             self._recursive_insert(target, path, [it_copy], position=pos)
 
+    def _rescue_stack(self, label="Interrupted"):
+        """Commits the current triage_stack to the ledger if it contains items."""
+        if self.triage_stack:
+            self.commit_to_ledger(label, self.triage_stack)
+            return True
+        return False
+
     def _get_path_pruned_item(self, item, path, leaf_item=None):
         """Returns a copy of item with hierarchy pruned to only show the path to focus."""
         if not path:
@@ -990,6 +998,14 @@ class DeepWorkCLI:
         fd = sys.stdin.fileno()
         self.original_termios = termios.tcgetattr(fd)
 
+        def signal_handler(sig, frame):
+            self._rescue_stack("Interrupted (SIGTERM)")
+            if self.original_termios:
+                termios.tcsetattr(fd, termios.TCSADRAIN, self.original_termios)
+            sys.exit(0)
+
+        signal.signal(signal.SIGTERM, signal_handler)
+
         # Always open in Free Write mode at start
         self.enter_free_write()
         self.focus_start_time = time.time()
@@ -1102,7 +1118,7 @@ class DeepWorkCLI:
                     else:
                         buffer += char
         except KeyboardInterrupt:
-            pass
+            self._rescue_stack("Interrupted")
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, self.original_termios)
 
@@ -1269,8 +1285,7 @@ class DeepWorkCLI:
             base_cmd = base_cmd_orig.lower()
             
             if base_cmd == 'q':
-                active = self.triage_stack
-                if active:
+                if self.triage_stack:
                     # Restore terminal for input()
                     fd = sys.stdin.fileno()
                     if self.original_termios:
@@ -1279,7 +1294,7 @@ class DeepWorkCLI:
                     res = input("Rescue remaining tasks to Free Write? (y/n): ").lower()
                     tty.setcbreak(fd)
                     if res == 'y':
-                        self.commit_to_ledger("Interrupted", active)
+                        self._rescue_stack("Interrupted")
                     else:
                         self.commit_to_ledger("Interrupted", [])
                 else:
