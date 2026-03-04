@@ -9,6 +9,7 @@ import random
 import select
 import termios
 import tty
+import signal
 import subprocess
 import shlex
 import tempfile
@@ -139,6 +140,24 @@ def _parse_time_with_ampm(time_str, ampm, reference_date):
         h = 0
 
     return reference_date.replace(hour=h, minute=m, second=0, microsecond=0)
+
+def strip_meeting_time(text):
+    """Removes supported meeting time patterns from task text."""
+    patterns = [
+        # Format: 11:00 AM-1:00 PM (must be before more general formats)
+        r'\d{1,2}(?::\d{2})?\s*(?:AM|PM)\s*-\s*\d{1,2}(?::\d{2})?\s*(?:AM|PM)',
+        # Format: 2:00-3:00 PM or 2-3 PM
+        r'\d{1,2}(?::\d{2})?\s*-\s*\d{1,2}(?::\d{2})?\s*(?:AM|PM)',
+        # Format: 2 PM 2h 15m or just 2 PM
+        r'\d{1,2}(?::\d{2})?\s*(?:AM|PM)(?:\s*\d+H)?(?:\s*\d+M)?'
+    ]
+    result = text
+    for p in patterns:
+        result = re.sub(p, '', result, flags=re.IGNORECASE)
+
+    # Cleanup extra spaces
+    result = re.sub(r'\s+', ' ', result).strip()
+    return result
 
 class DeepWorkCLI:
     def __init__(self):
@@ -326,14 +345,19 @@ class DeepWorkCLI:
         today_str = datetime.now().strftime(DATE_FORMAT)
         is_current_file_today = today_str in FILENAME
 
+        # Deep copy to avoid mutating original
+        deferred_task = copy.deepcopy(task)
+        deferred_task['line'] = strip_meeting_time(deferred_task['line'])
+
+        # Target version: main task [], subtasks preserve status
+        target_task = self._prepare_task_with_markers(deferred_task, '[]', '[]')
+        # Current ledger version: main task [>], pending subtasks [>], others preserve
+        ledger_task = self._prepare_task_with_markers(deferred_task, '[>]', '[>]')
+
         if is_target_today and is_current_file_today:
-            return copy.deepcopy(task), None, "today"
+            return ledger_task, target_task, "today"
         else:
             target_file = get_target_file(target_date)
-            # Target version: main task [], subtasks preserve status
-            target_task = self._prepare_task_with_markers(task, '[]', '[]')
-            # Current ledger version: main task [>], pending subtasks [>], others preserve
-            ledger_task = self._prepare_task_with_markers(task, '[>]', '[>]')
             return ledger_task, target_task, target_file
 
     def _handle_defer_command(self, base_cmd, parts):
@@ -362,7 +386,7 @@ class DeepWorkCLI:
 
             if target_res == "today":
                 self.commit_to_ledger("Deferred", ledger_items)
-                self.triage_stack.extend(ledger_items)
+                self.triage_stack.extend(target_items)
                 self.last_msg = f"Deferred {count} items to end of today's stack"
             else:
                 self.commit_to_ledger("Deferred from last session", target_items, target_file=target_res)
@@ -373,13 +397,14 @@ class DeepWorkCLI:
             l_task, t_task, res = self._prepare_defer_tasks(task, target_date)
             if res == "today":
                 self.commit_to_ledger("Deferred", [l_task])
-                self.triage_stack.append(l_task)
+                self.triage_stack.append(t_task)
                 self.last_msg = "Deferred to end of today's stack"
             else:
                 self.commit_to_ledger("Deferred from last session", [t_task], target_file=res)
                 self.commit_to_ledger("Deferred", [l_task])
                 self.last_msg = f"Deferred to {res}"
 
+        self.commit_to_ledger("Triage", self.triage_stack)
         self.task_start_time = None
         self.initial_stack = copy.deepcopy(self.triage_stack)
         return True
@@ -704,6 +729,13 @@ class DeepWorkCLI:
             it_copy['indent'] = max(0, it['indent'] - 2)
             self._recursive_insert(target, path, [it_copy], position=pos)
 
+    def _rescue_stack(self, label="Interrupted"):
+        """Commits the current triage_stack to the ledger if it contains items."""
+        if self.triage_stack:
+            self.commit_to_ledger(label, self.triage_stack)
+            return True
+        return False
+
     def _get_path_pruned_item(self, item, path, leaf_item=None):
         """Returns a copy of item with hierarchy pruned to only show the path to focus."""
         if not path:
@@ -988,6 +1020,14 @@ class DeepWorkCLI:
         fd = sys.stdin.fileno()
         self.original_termios = termios.tcgetattr(fd)
 
+        def signal_handler(sig, frame):
+            self._rescue_stack("Interrupted (SIGTERM)")
+            if self.original_termios:
+                termios.tcsetattr(fd, termios.TCSADRAIN, self.original_termios)
+            sys.exit(0)
+
+        signal.signal(signal.SIGTERM, signal_handler)
+
         # Always open in Free Write mode at start
         self.enter_free_write()
         self.focus_start_time = time.time()
@@ -1100,7 +1140,7 @@ class DeepWorkCLI:
                     else:
                         buffer += char
         except KeyboardInterrupt:
-            pass
+            self._rescue_stack("Interrupted")
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, self.original_termios)
 
@@ -1267,8 +1307,7 @@ class DeepWorkCLI:
             base_cmd = base_cmd_orig.lower()
             
             if base_cmd == 'q':
-                active = self.triage_stack
-                if active:
+                if self.triage_stack:
                     # Restore terminal for input()
                     fd = sys.stdin.fileno()
                     if self.original_termios:
@@ -1277,7 +1316,7 @@ class DeepWorkCLI:
                     res = input("Rescue remaining tasks to Free Write? (y/n): ").lower()
                     tty.setcbreak(fd)
                     if res == 'y':
-                        self.commit_to_ledger("Interrupted", active)
+                        self._rescue_stack("Interrupted")
                     else:
                         self.commit_to_ledger("Interrupted", [])
                 else:
@@ -1563,29 +1602,13 @@ class DeepWorkCLI:
                         self.last_msg = "Command disabled during break."
                         return
 
-                    if base_cmd == '>>' or (base_cmd == '>' and not focus_path):
+                    if base_cmd == '>>' or base_cmd == '>':
                         if self._handle_defer_command(base_cmd, parts):
                             return
 
                     effective_cmd = '-' if base_cmd == 'i' else base_cmd
                     marker = {'x': '[x]', '-': '[-]', '>': '[>]'}[effective_cmd]
                     ledger_label = {'x': 'Task Completed', '-': 'Task Cancelled', '>': 'Task Deferred'}[effective_cmd]
-
-                    if base_cmd == '>':
-                        # Deferring a sub-task
-                        defer_date_str = " ".join(parts[1:])
-                        target_date = parse_defer_date(defer_date_str)
-                        if not target_date:
-                            self.last_msg = f"Invalid date: {defer_date_str}"
-                            return
-
-                        l_task, t_task, res = self._prepare_defer_tasks(focus_item, target_date)
-                        if res != "today":
-                            self.commit_to_ledger("Deferred from last session", [t_task], target_file=res)
-                            self.last_msg = f"Task deferred to {res}"
-                        else:
-                            self.triage_stack.append(l_task)
-                            self.last_msg = "Task deferred to end of today's stack"
 
                     # Resolve item
                     resolved_item = self._prepare_task_with_markers(focus_item, marker, marker)
