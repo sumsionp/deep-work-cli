@@ -729,6 +729,21 @@ class DeepWorkCLI:
             it_copy['indent'] = max(0, it['indent'] - 2)
             self._recursive_insert(target, path, [it_copy], position=pos)
 
+    def _transition_from_break_to_work(self):
+        now = time.time()
+        break_total_time = now - self.break_start_time
+        if self.task_start_time:
+            self.task_start_time += break_total_time
+        self.focus_start_time = now
+        self.mode = "WORK"
+        if self.mini_timer_active:
+            self.mini_timer_remaining = self.mini_timer_duration * 60
+            self.mini_timer_last_tick = now
+            self.mini_timer_last_chime_timestamp = 0
+        self.commit_to_ledger("Work Session Re-started at", [])
+        self.last_msg = "Work Resumed"
+        self.last_chime_timestamp = 0
+
     def _rescue_stack(self, label="Interrupted"):
         """Commits the current triage_stack to the ledger if it contains items."""
         if self.triage_stack:
@@ -881,7 +896,7 @@ class DeepWorkCLI:
         return m_time[0] <= now_dt < m_time[1]
 
     def check_meetings(self):
-        if self.mode != "WORK": return
+        if self.mode not in ["WORK", "BREAK"]: return
         if not self.triage_stack: return
 
         now = datetime.now()
@@ -889,6 +904,10 @@ class DeepWorkCLI:
         for i, task in enumerate(self.triage_stack):
             m_time = parse_meeting_time(task['line'])
             if m_time and m_time[0] <= now < m_time[1]:
+                # If we are in BREAK mode, switch to WORK mode first
+                if self.mode == "BREAK":
+                    self._transition_from_break_to_work()
+
                 meeting_id = f"{task['line']}_{m_time[0]}"
                 if meeting_id not in self.chimed_meetings:
                     self.play_chime()
@@ -1100,9 +1119,10 @@ class DeepWorkCLI:
                 if self.mode in ["WORK", "BREAK", "TRIAGE"]:
                     self.check_chime()
 
-                if self.mode == "WORK":
+                if self.mode in ["WORK", "BREAK"]:
                     self.check_meetings()
-                    self.update_mini_timer()
+                    if self.mode == "WORK":
+                        self.update_mini_timer()
 
                 rlist, _, _ = select.select([sys.stdin], [], [], 0.1)
                 if rlist:
@@ -1396,19 +1416,7 @@ class DeepWorkCLI:
 
             if self.mode == "BREAK":
                 if base_cmd == 'w':
-                    now = time.time()
-                    break_total_time = now - self.break_start_time
-                    if self.task_start_time:
-                        self.task_start_time += break_total_time
-                    self.focus_start_time = now
-                    self.mode = "WORK"
-                    if self.mini_timer_active:
-                        self.mini_timer_remaining = self.mini_timer_duration * 60
-                        self.mini_timer_last_tick = now
-                        self.mini_timer_last_chime_timestamp = 0
-                    self.commit_to_ledger("Work Session Re-started at", [])
-                    self.last_msg = "Work Resumed"
-                    self.last_chime_timestamp = 0
+                    self._transition_from_break_to_work()
                     return
                 elif base_cmd == 'b':
                     self.last_msg = "Break time overload! Doing nothing."
