@@ -666,7 +666,9 @@ class DeepWorkCLI:
                 self.commit_to_ledger(mode_label, [target])
                 self.last_msg = "Sub-item(s) Added"
             else:
-                for it in hier_items:
+                # Reverse items for 'N' to maintain original order when prepending/inserting before
+                items_to_process = reversed(hier_items) if base_cmd_orig == 'N' else hier_items
+                for it in items_to_process:
                     it_copy = copy.deepcopy(it)
                     focus_indent = focus_indents[len(focus_path)]
 
@@ -731,8 +733,8 @@ class DeepWorkCLI:
         else:
             pos = 'before' if base_cmd_orig == 'N' else 'after'
 
-        # Reverse items for prepend_notes to keep their original order
-        items_to_process = reversed(items) if pos == 'prepend_notes' else items
+        # Reverse items for prepend_notes/before to keep their original order
+        items_to_process = reversed(items) if pos in ['prepend_notes', 'before'] else items
 
         for it in items_to_process:
             # Shift item to be relative to target (e.g. 2 spaces -> 0 spaces)
