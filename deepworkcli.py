@@ -181,6 +181,7 @@ class DeepWorkCLI:
         self.mini_timer_last_chime_timestamp = 0
         self.mini_timer_was_meeting = False
         self.last_recorded_focus = None
+        self.break_meeting_interrupted = False
 
     def get_daily_summary(self):
         counts = {'[x]': 0, '[-]': 0, '[>]': 0}
@@ -736,6 +737,7 @@ class DeepWorkCLI:
             self.task_start_time += break_total_time
         self.focus_start_time = now
         self.mode = "WORK"
+        self.break_meeting_interrupted = False
         if self.mini_timer_active:
             self.mini_timer_remaining = self.mini_timer_duration * 60
             self.mini_timer_last_tick = now
@@ -870,11 +872,12 @@ class DeepWorkCLI:
             elapsed_break = now - self.break_start_time
             remaining = self.break_duration * 60 - elapsed_break
 
-            if remaining <= 0:
+            if remaining <= 0 or self.break_meeting_interrupted:
                 if now - self.last_chime_timestamp >= 60:
                     self.play_chime()
                     self.last_chime_timestamp = now
-                    self.last_msg = "!!! BREAK EXPIRED !!!"
+                    if remaining <= 0:
+                        self.last_msg = "!!! BREAK EXPIRED !!!"
         elif self.mode in ["WORK", "TRIAGE"]:
             is_meeting = False
             if self.mode == "WORK" and self.triage_stack:
@@ -907,7 +910,7 @@ class DeepWorkCLI:
                 meeting_id = f"{task['line']}_{m_time[0]}"
                 if meeting_id not in self.chimed_meetings:
                     if self.mode == "BREAK":
-                        self._transition_from_break_to_work()
+                        self.break_meeting_interrupted = True
                     self.play_chime()
                     self.chimed_meetings.add(meeting_id)
                     task_content = re.sub(r'^\[[xe\->\s]?\]\s*', '', task['line'])
@@ -945,9 +948,9 @@ class DeepWorkCLI:
 
         color = "\033[1;34m"
         header = " BREAK SESSION "
-        if remaining <= 0:
+        if remaining <= 0 or self.break_meeting_interrupted:
             color = "\033[1;31;7m"
-            header = " !!! BREAK EXPIRED !!! "
+            header = " !!! BREAK EXPIRED !!! " if remaining <= 0 else " !!! MEETING STARTING !!! "
 
         print(color + "="*65 + "\033[0m")
         print(f"{color}{header}\033[0m | Remaining: {time_str}")
@@ -1023,9 +1026,9 @@ class DeepWorkCLI:
             m, s = divmod(abs(remaining), 60)
             color = "\033[1;34m"
             header = " BREAK SESSION "
-            if remaining <= 0:
+            if remaining <= 0 or self.break_meeting_interrupted:
                 color = "\033[1;31;7m"
-                header = " !!! BREAK EXPIRED !!! "
+                header = " !!! BREAK EXPIRED !!! " if remaining <= 0 else " !!! MEETING STARTING !!! "
 
             sys.stdout.write("\033[1;1H" + f"{color}{'='*65}\033[0m")
             sys.stdout.write("\033[2;1H" + f"{color}{header}\033[0m | Remaining: {sign}{m:02d}:{s:02d}")
@@ -1495,6 +1498,7 @@ class DeepWorkCLI:
                         return
 
                     self.mode = "BREAK"
+                    self.break_meeting_interrupted = False
                     self.break_duration = duration
                     self.break_start_time = time.time()
                     self.break_quote = random.choice(BREAK_QUOTES)
@@ -1531,6 +1535,7 @@ class DeepWorkCLI:
                         return
 
                     self.mode = "BREAK"
+                    self.break_meeting_interrupted = False
                     self.break_duration = duration
                     self.break_start_time = time.time()
                     self.break_quote = random.choice(BREAK_QUOTES)
