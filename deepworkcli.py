@@ -449,18 +449,17 @@ class DeepWorkCLI:
             indent_len = len(m.group(1))
             content = line[indent_len:]
 
-            if re.match(r'^\[[xe\->\s]?\]', content):
+            # A line starts a new item if:
+            # 1. There is no current item
+            # 2. OR its indentation is less than or equal to the current item's base indentation
+            if not current_item or indent_len <= current_item['indent']:
                 current_item = {'line': content, 'notes': [], 'indent': indent_len}
                 items.append(current_item)
             else:
-                if current_item:
-                    # Preserve relative indentation for notes by stripping only the task's base indent + 2
-                    note_rel = line[current_item['indent'] + 2:] if len(line) >= current_item['indent'] + 2 else line.lstrip()
-                    current_item['notes'].append(note_rel)
-                else:
-                    # Treating as a task if it's the first thing in the batch, even if it doesn't have a marker
-                    current_item = {'line': content, 'notes': [], 'indent': indent_len}
-                    items.append(current_item)
+                # It's a note for the current item
+                # Preserve relative indentation for notes by stripping only the task's base indent + 2
+                note_rel = line[current_item['indent'] + 2:] if len(line) >= current_item['indent'] + 2 else line.lstrip()
+                current_item['notes'].append(note_rel)
 
         return items
 
@@ -636,95 +635,108 @@ class DeepWorkCLI:
 
         # Determine focus info
         top_task = self.triage_stack[0]
-        _, _, focus_path = self._get_recursive_focus(top_task)
-
-        # Calculate absolute indentation of focus path elements
-        focus_indents = [0] # Top-level task is 0
-        curr = top_task
-        for idx in focus_path:
-            sub, _ = self._get_subtask_as_item(curr, idx)
-            focus_indents.append(focus_indents[-1] + 2)
-            curr = sub
-
-        mode_label = "Prioritized Entry(s)" if base_cmd_orig == 'N' else "New Entry(s)"
-        any_hierarchical = False
-
-        # We process items one by one. This is safer for mixed-indentation batches.
-        # However, for efficiency, let's process the batch as per base_cmd.
 
         if self.mode in ["TRIAGE"]:
-            # TRIAGE mode doesn't have a focus path.
-            # We follow user's simple rule: non-zero indent targets stack ends.
-            indented_items = [it for it in items if it['indent'] > 0]
-            if indented_items:
-                target = self.triage_stack[0] if base_cmd_orig == 'N' else self.triage_stack[-1]
-                # Normalize indentation relative to target root (0 -> 0)
-                # Actually, the user's Triage example had Case Review (level 0)
-                # and added subtasks with 2 spaces.
-                # So we strip 2 spaces from everything in the batch if it's hierarchical.
-                self._insert_hierarchical_batch(target, [], indented_items, base_cmd_orig)
-                self.commit_to_ledger(mode_label, [target])
-                self.last_msg = "Sub-item(s) Added"
-                return True
-            return False
+            focus_path = []
+            focus_indents = [0]
+        else:
+            _, _, focus_path = self._get_recursive_focus(top_task)
+            # Calculate absolute indentation of focus path elements
+            focus_indents = [0] # Top-level task is 0
+            curr = top_task
+            for idx in focus_path:
+                sub, _ = self._get_subtask_as_item(curr, idx)
+                focus_indents.append(focus_indents[-1] + 2)
+                curr = sub
 
-        # WORK/BREAK mode: focus-aware
+        mode_label = "Prioritized Entry(s)" if base_cmd_orig == 'N' else "New Entry(s)"
+
         # Separate items into top-level (indent 0) and hierarchical (indent > 0)
         top_level_items = [it for it in items if it['indent'] == 0]
         hier_items = [it for it in items if it['indent'] > 0]
 
+        any_changed = False
+
         if hier_items:
-            any_hierarchical = True
-            for it in hier_items:
-                it_copy = copy.deepcopy(it)
-                focus_indent = focus_indents[len(focus_path)]
+            any_changed = True
+            if self.mode == "TRIAGE":
+                # User expects leading subtasks in Triage Mode to target the first task in the stack
+                target = self.triage_stack[0]
+                self._insert_hierarchical_batch(target, [], hier_items, base_cmd_orig)
+                self.commit_to_ledger(mode_label, [target])
+                self.last_msg = "Sub-item(s) Added"
+            else:
+                # Reverse items for 'N' to maintain original order when prepending/inserting before
+                items_to_process = reversed(hier_items) if base_cmd_orig == 'N' else hier_items
+                for it in items_to_process:
+                    it_copy = copy.deepcopy(it)
+                    focus_indent = focus_indents[len(focus_path)]
 
-                depth_offset = (it['indent'] - focus_indent) // 2
-                target_depth = len(focus_path) + depth_offset
-                target_depth = max(0, min(len(focus_path) + 1, target_depth))
+                    depth_offset = (it['indent'] - focus_indent) // 2
+                    target_depth = len(focus_path) + depth_offset
+                    target_depth = max(0, min(len(focus_path) + 1, target_depth))
 
-                if target_depth > 0:
-                    it_copy['indent'] = it['indent'] - focus_indents[target_depth - 1] - 2
-                else:
-                    it_copy['indent'] = it['indent']
+                    if target_depth > 0:
+                        it_copy['indent'] = it['indent'] - focus_indents[target_depth - 1] - 2
+                    else:
+                        it_copy['indent'] = it['indent']
 
-                pos = 'before' if base_cmd_orig == 'N' else 'after'
-                if target_depth == len(focus_path) + 1:
-                    # Child: ignore n/N for exact position, just append or prepend to notes
-                    child_pos = 'append' if base_cmd_orig == 'n' else 'prepend_notes'
-                    self._recursive_insert(top_task, focus_path, [it_copy], position=child_pos)
-                else:
-                    # Sibling or higher
-                    target_path = focus_path[:target_depth]
-                    self._recursive_insert(top_task, target_path, [it_copy], position=pos)
+                    pos = 'before' if base_cmd_orig == 'N' else 'after'
+                    if target_depth == len(focus_path) + 1:
+                        # Child: ignore n/N for exact position, just append or prepend to notes
+                        child_pos = 'append' if base_cmd_orig == 'n' else 'prepend_notes'
+                        self._recursive_insert(top_task, focus_path, [it_copy], position=child_pos)
+                    else:
+                        # Sibling or higher
+                        target_path = focus_path[:target_depth]
+                        self._recursive_insert(top_task, target_path, [it_copy], position=pos)
 
-            self.commit_to_ledger(mode_label, [top_task])
-            self.last_recorded_focus = top_task['line'].strip()
-            self.last_msg = "Sub-item(s) Added"
-            if base_cmd_orig == 'N':
-                self.task_start_time = None
+                self.commit_to_ledger(mode_label, [top_task])
+                self.last_recorded_focus = top_task['line'].strip()
+                self.last_msg = "Sub-item(s) Added"
+                if base_cmd_orig == 'N':
+                    self.task_start_time = None
 
         if top_level_items:
+            any_changed = True
             # Handle top-level items using standard stack logic
             self.commit_to_ledger(mode_label, top_level_items)
             new_tasks = [it for it in top_level_items if it['line'].strip().startswith('[]')]
             if base_cmd_orig == 'N':
+                # If we also had hierarchical items, and they targeted index 0 (N always does),
+                # we insert new top-level tasks at index 1 to preserve focus on the original task.
+                insert_idx = 1 if (hier_items and self.triage_stack) else 0
+
                 for it in reversed(new_tasks):
-                    self.triage_stack.insert(0, it)
-                self.last_recorded_focus = self.triage_stack[0]['line'].strip()
-                self.task_start_time = None
+                    self.triage_stack.insert(insert_idx, it)
+
+                if insert_idx == 0 and new_tasks:
+                    self.last_recorded_focus = self.triage_stack[0]['line'].strip()
+                    self.task_start_time = None
+
+                self.last_msg = "Task(s) Added & Prioritized" if new_tasks else "Note(s) Added"
             else:
                 self.triage_stack.extend(new_tasks)
-            self.last_msg = "Task(s) Added"
-            return True
+                self.last_msg = "Task(s) Added" if new_tasks else "Note(s) Added"
 
-        return any_hierarchical
+        return any_changed
 
     def _insert_hierarchical_batch(self, target, path, items, base_cmd_orig):
         # Normalizes a batch of items (stripping the common 2-space prefix)
         # and appends/prepends to target hierarchy.
-        pos = 'before' if base_cmd_orig == 'N' else 'after'
-        for it in items:
+
+        # In Triage Mode (or whenever path is empty), 'before'/'after' don't make sense
+        # for leading items as there is no focus item to be relative to.
+        # Instead, we use 'prepend_notes' for N and 'append' for n.
+        if not path:
+            pos = 'prepend_notes' if base_cmd_orig == 'N' else 'append'
+        else:
+            pos = 'before' if base_cmd_orig == 'N' else 'after'
+
+        # Reverse items for prepend_notes/before to keep their original order
+        items_to_process = reversed(items) if pos in ['prepend_notes', 'before'] else items
+
+        for it in items_to_process:
             # Shift item to be relative to target (e.g. 2 spaces -> 0 spaces)
             it_copy = copy.deepcopy(it)
             it_copy['indent'] = max(0, it['indent'] - 2)

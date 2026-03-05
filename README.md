@@ -12,6 +12,7 @@ This program acts as a "lens" for a chronological journal stored in a plain text
 - **Tasks:** Lines starting with `[]`, `[ ]`, `[x]`, `[-]`, `[>]`, or `[e]`.
 - **Notes:** Any line that isn't a task.
 - **Hierarchy:** Two leading spaces indicate a child relationship (subtask or note) to the task above.
+- **Multi-line Grouping:** When adding tasks via `n` or `N`, the parser uses indentation to group items. Any line indented more than the preceding line is automatically treated as a sub-item (note or subtask) of that parent, ensuring that a new task and its subtasks are added to the stack as a single unit.
 
 ### Meeting Support
 Tasks can be time-aware by including a time block. Meetings automatically preempt the current task when their start time arrives.
@@ -47,8 +48,8 @@ Entered automatically after the initial Free Write session or by using the `t` c
 - `e <idx>`: **Edit.** Opens the item and its sub-items in `vi` for editing.
 - `f`: **Free Write.** Appends a Free Write marker and opens the journal file in `vi`.
 - `i <idx>`: **Ignore.** Removes a note from the stack. If it's a task, marks it as cancelled `[-]`.
-- `N`: **Prioritize.** Opens `vi` to add one or more tasks/notes to the top of the stack.
-- `n`: **Add.** Opens `vi` to add one or more tasks/notes to the end of the stack.
+- `N`: **Prioritize.** Opens `vi` to add one or more tasks/notes. Indented leading items are attached to the first task in the stack. New top-level tasks are inserted at the top.
+- `n`: **Add.** Opens `vi` to add one or more tasks/notes. Indented leading items are attached to the first task in the stack. New top-level tasks are appended to the end.
 - `b <mins>`: **Break.** Enters Break Mode.
 - `w`: **Work.** Commits the triage session and enters Work Mode.
 - `q`: **Quit.** Exits the CLI.
@@ -73,8 +74,8 @@ Entered by typing `w` from Triage Mode. It displays the top task along with its 
 - `f`: **Free Write.** Appends a Free Write marker and opens the journal file in `vi`. After editing, you return to Triage Mode.
 - `m <mins>` or `m`: **Mini Task.** Toggles Mini Task Session mode (default 2 minutes).
 - `[Space]`: **Reset Mini Timer.** When in Mini Task Session mode, resets the timer to its full duration (only works when command buffer is empty).
-- `N`: **Prioritize.** Opens `vi` to add tasks/notes. If input is indented, they are prioritized hierarchically before the current focus. Otherwise, they go to the top of the stack.
-- `n`: **Add.** Opens `vi` to add tasks/notes. If input is indented, they are added as sub-items after the current focus. Otherwise, they are appended to the stack.
+- `N`: **Prioritize.** Opens `vi` to add tasks/notes. Indented items are added relative to the current focus path. In mixed batches (sub-items for focus AND new top-level tasks), focus is preserved on the current task, and new top-level tasks are inserted at index 1 (as the next task).
+- `n`: **Add.** Opens `vi` to add tasks/notes. Indented items are added relative to the current focus path. New top-level tasks are appended to the end of the stack.
 - `b <mins>`: **Break.** Enters Break Mode for specified minutes (default 5).
 - `i`: **Ignore.** Skips the current item (marks as cancelled if it's a task).
 - `t`: **Triage.** Returns to Triage Mode.
