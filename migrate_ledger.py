@@ -20,6 +20,8 @@ RECOGNIZED_LABELS = [
     "Work Session Re-started at",
     "Focus Session Re-started at",
     "Break for",
+    "New Entry",
+    "Prioritized Task",
     "Deferred from last session",
     "Deferred",
     "Edited",
@@ -79,6 +81,8 @@ def migrate_file(filepath):
         (r'------- Work Session Complete (.*) -------', r'------- Focus Session Complete \1 -------'),
         (r'------- Work Session Re-started at (.*) -------', r'------- Focus Session Re-started at \1 -------'),
         (r'------- DEEP WORK SESSION (.*) -------', r'------- FOCUS SESSION \1 -------'),
+        (r'------- New Entry (.*) -------', r'------- New Entry(s) \1 -------'),
+        (r'------- Prioritized Task (.*) -------', r'------- Prioritized Entry(s) \1 -------'),
     ]
 
     count = 0
