@@ -258,29 +258,86 @@ class FocusCLI:
             with open(FILENAME, 'w') as f: f.write(f"Session Start - {get_timestamp()}\n")
             self.triage_stack = []
             return
-        
-        with open(FILENAME, 'r') as f:
+
+        self.triage_stack = self._parse_file(FILENAME)
+
+    def rescue_previous_tasks(self):
+        """Scans the last 7 days for pending tasks and defers them to today."""
+        # Only rescue if we are using the default daily plan format
+        today_str = datetime.now().strftime(DATE_FORMAT)
+        if FILENAME != f"{today_str}-plan.txt":
+            return
+
+        all_rescued_tasks = []
+        today_dt = datetime.now()
+
+        # Scan forward from 7 days ago to yesterday
+        for i in range(7, 0, -1):
+            prev_date = today_dt - timedelta(days=i)
+            prev_file = get_target_file(prev_date)
+
+            if os.path.exists(prev_file):
+                # Parse the file for pending items
+                tasks_and_notes = self._parse_file(prev_file)
+
+                # We only want tasks (starting with [])
+                pending_tasks = [t for t in tasks_and_notes if t['line'].strip().startswith('[]')]
+
+                if pending_tasks:
+                    # Mark as deferred in the old file
+                    # Requirement: ------- Deferred to [Today's Date] <Timestamp> -------
+                    label = f"Deferred to {today_str}"
+
+                    # Prepare the deferred version for the old file
+                    ledger_items = []
+                    for task in pending_tasks:
+                        # Current ledger version: main task [>], pending subtasks [>], others preserve
+                        l_task = self._prepare_task_with_markers(task, '[>]', '[>]')
+                        ledger_items.append(l_task)
+
+                    self.commit_to_ledger(label, ledger_items, target_file=prev_file)
+
+                    # Prepare the rescued tasks for today's file
+                    # Requirement: Include full hierarchy of pending subtasks
+                    for task in pending_tasks:
+                        # Deep copy and strip meeting times
+                        rescued_task = copy.deepcopy(task)
+                        rescued_task['line'] = strip_meeting_time(rescued_task['line'])
+                        # Target version: main task [], subtasks preserve status
+                        t_task = self._prepare_task_with_markers(rescued_task, '[]', '[]')
+                        all_rescued_tasks.append(t_task)
+
+        if all_rescued_tasks:
+            self.commit_to_ledger("Deferred from last session", all_rescued_tasks)
+
+    def _parse_file(self, filepath):
+        """Parses a ledger file and returns a list of active tasks and notes."""
+        if not os.path.exists(filepath):
+            return []
+
+        with open(filepath, 'r') as f:
             lines = [l.rstrip() for l in f.readlines()]
 
         active_entries = {} # content -> {notes, is_task}
         entry_order = [] # list of contents
         last_entry_content = None
-        
+
         for line in lines:
             if "------- Triage" in line:
                 new_entry_order = []
                 for content in entry_order:
-                    if active_entries[content]['is_task']:
-                        new_entry_order.append(content)
-                    else:
-                        del active_entries[content]
+                    if content in active_entries:
+                        if active_entries[content]['is_task']:
+                            new_entry_order.append(content)
+                        else:
+                            del active_entries[content]
                 entry_order = new_entry_order
                 last_entry_content = None
                 continue
 
             if not line.strip() or "-------" in line:
                 continue
-            
+
             if not line.startswith('  '):
                 clean = line.strip()
                 marker_match = re.match(r'^\[([xe\->\s]?)\]\s*', clean)
@@ -332,13 +389,15 @@ class FocusCLI:
                         notes_list.append(note)
                     active_entries[last_entry_content]['notes'] = notes_list
 
-        self.triage_stack = []
+        stack = []
         for content in entry_order:
-            entry = active_entries[content]
-            self.triage_stack.append({
-                'line': f"[] {content}" if entry['is_task'] else content,
-                'notes': entry['notes']
-            })
+            if content in active_entries:
+                entry = active_entries[content]
+                stack.append({
+                    'line': f"[] {content}" if entry['is_task'] else content,
+                    'notes': entry['notes']
+                })
+        return stack
 
     def _prepare_defer_tasks(self, task, target_date):
         """Prepare tasks for ledger and target file without committing them."""
@@ -390,8 +449,9 @@ class FocusCLI:
                 self.triage_stack.extend(target_items)
                 self.last_msg = f"Deferred {count} items to end of today's stack"
             else:
+                label = f"Deferred to {target_date.strftime(DATE_FORMAT)}"
                 self.commit_to_ledger("Deferred from last session", target_items, target_file=target_res)
-                self.commit_to_ledger("Deferred", ledger_items)
+                self.commit_to_ledger(label, ledger_items)
                 self.last_msg = f"Deferred {count} items to {target_res}"
         else: # base_cmd == '>'
             task = self.triage_stack.pop(0)
@@ -401,8 +461,9 @@ class FocusCLI:
                 self.triage_stack.append(t_task)
                 self.last_msg = "Deferred to end of today's stack"
             else:
+                label = f"Deferred to {target_date.strftime(DATE_FORMAT)}"
                 self.commit_to_ledger("Deferred from last session", [t_task], target_file=res)
-                self.commit_to_ledger("Deferred", [l_task])
+                self.commit_to_ledger(label, [l_task])
                 self.last_msg = f"Deferred to {res}"
 
         self.commit_to_ledger("Triage", self.triage_stack)
@@ -1110,6 +1171,10 @@ class FocusCLI:
             sys.exit(0)
 
         signal.signal(signal.SIGTERM, signal_handler)
+
+        # Check for previous tasks if this is the first launch for today's file
+        if not os.path.exists(FILENAME):
+            self.rescue_previous_tasks()
 
         # Always open in Free Write mode at start
         self.enter_free_write()

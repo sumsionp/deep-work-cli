@@ -24,6 +24,7 @@ RECOGNIZED_LABELS = [
     "Prioritized Task",
     "Deferred from last session",
     "Deferred",
+    "Deferred to",
     "Edited",
     "Meeting Auto-Completed",
     "Task Started",
@@ -58,10 +59,12 @@ def migrate_file(filepath):
             label_candidate = m_gen.group(1).strip()
 
         if label_candidate:
-            # Special case for "Break for <mins> at"
+            # Special cases for dynamic markers
             label_for_check = label_candidate
             if label_candidate.startswith("Break for"):
                 label_for_check = "Break for"
+            elif label_candidate.startswith("Deferred to"):
+                label_for_check = "Deferred to"
 
             if label_for_check not in RECOGNIZED_LABELS:
                 unrecognized.append((i + 1, line.strip()))
