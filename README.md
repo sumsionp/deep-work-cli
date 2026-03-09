@@ -31,7 +31,7 @@ The program automatically starts in Free Write mode upon launch. It appends a `-
 #### Program Launch
 For the best experience, add an alias to your shell configuration (e.g., `~/.alias` or `~/.bashrc`):
 ```bash
-alias focus='python3 ~/projects/deep-work-cli/focuscli.py'
+alias focus='python3 ~/projects/focus-cli/focuscli.py'
 ```
 Running `focus` will start your session in the daily file (e.g., `YYYYMMDD-plan.txt`).
 
