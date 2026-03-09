@@ -285,8 +285,8 @@ class FocusCLI:
 
                 if pending_tasks:
                     # Mark as deferred in the old file
-                    # Requirement: ------- Deferred to [Today's Date] <Timestamp> -------
-                    label = f"Deferred to {today_str}"
+                    # Requirement: ------- Deferred to [Target Filename] <Timestamp> -------
+                    label = f"Deferred to {FILENAME}"
 
                     # Prepare the deferred version for the old file
                     ledger_items = []
@@ -309,6 +309,8 @@ class FocusCLI:
 
         if all_rescued_tasks:
             self.commit_to_ledger("Deferred from last session", all_rescued_tasks)
+            # Update in-memory stack
+            self.triage_stack.extend(all_rescued_tasks)
 
     def _parse_file(self, filepath):
         """Parses a ledger file and returns a list of active tasks and notes."""
@@ -449,7 +451,7 @@ class FocusCLI:
                 self.triage_stack.extend(target_items)
                 self.last_msg = f"Deferred {count} items to end of today's stack"
             else:
-                label = f"Deferred to {target_date.strftime(DATE_FORMAT)}"
+                label = f"Deferred to {target_res}"
                 self.commit_to_ledger("Deferred from last session", target_items, target_file=target_res)
                 self.commit_to_ledger(label, ledger_items)
                 self.last_msg = f"Deferred {count} items to {target_res}"
@@ -461,7 +463,7 @@ class FocusCLI:
                 self.triage_stack.append(t_task)
                 self.last_msg = "Deferred to end of today's stack"
             else:
-                label = f"Deferred to {target_date.strftime(DATE_FORMAT)}"
+                label = f"Deferred to {res}"
                 self.commit_to_ledger("Deferred from last session", [t_task], target_file=res)
                 self.commit_to_ledger(label, [l_task])
                 self.last_msg = f"Deferred to {res}"

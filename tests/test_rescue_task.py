@@ -55,7 +55,7 @@ class TestRescueTask(unittest.TestCase):
         # Check if yesterday's file has the deferred marker
         with open(yesterday_file, 'r') as f:
             content = f.read()
-            self.assertIn(f"Deferred to {today_str}", content)
+            self.assertIn(f"Deferred to {today_file}", content)
             self.assertIn("[>] Task 1", content)
             self.assertIn("  [>] Subtask 1", content)
 
@@ -103,10 +103,10 @@ class TestRescueTask(unittest.TestCase):
         # Defer Task to tomorrow
         self.cli.handle_command(f"> {tomorrow_str}")
 
-        # Check today's file for "Deferred to YYYYMMDD"
+        # Check today's file for "Deferred to YYYYMMDD-plan.txt"
         with open(today_file, 'r') as f:
             content = f.read()
-            self.assertIn(f"Deferred to {tomorrow_str}", content)
+            self.assertIn(f"Deferred to {tomorrow_file}", content)
             self.assertIn("[>] Task to defer", content)
 
 if __name__ == '__main__':
