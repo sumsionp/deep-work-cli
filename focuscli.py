@@ -1199,6 +1199,7 @@ class FocusCLI:
             cursor_pos = 0
             last_render_second = -1
             last_buffer = None
+            last_cursor_pos = None
             last_mode = None
             last_msg = None
             last_task = None
@@ -1225,6 +1226,7 @@ class FocusCLI:
 
                 structural_change = (
                     buffer != last_buffer or
+                    cursor_pos != last_cursor_pos or
                     self.mode != last_mode or
                     self.last_msg != last_msg or
                     current_task != last_task or
@@ -1259,6 +1261,7 @@ class FocusCLI:
 
                     last_render_second = current_second
                     last_buffer = buffer
+                    last_cursor_pos = cursor_pos
                     last_mode = self.mode
                     last_msg = self.last_msg
                     last_task = copy.deepcopy(current_task)
@@ -1316,25 +1319,37 @@ class FocusCLI:
                     elif ord(char) == 3: # Ctrl+C
                         raise KeyboardInterrupt
                     elif ord(char) == 27: # ESC sequence
-                        r, _, _ = select.select([sys.stdin], [], [], 0.01)
-                        if r:
-                            next1 = sys.stdin.read(1)
-                            if next1 == '[':
-                                r, _, _ = select.select([sys.stdin], [], [], 0.01)
-                                if r:
-                                    next2 = sys.stdin.read(1)
-                                    if next2 == 'D': # Left Arrow
-                                        if cursor_pos > 0: cursor_pos -= 1
-                                    elif next2 == 'C': # Right Arrow
-                                        if cursor_pos < len(buffer): cursor_pos += 1
-                                    elif next2 == 'H': # Home
-                                        cursor_pos = 0
-                                    elif next2 == 'F': # End
-                                        cursor_pos = len(buffer)
-                                    elif next2 == '3': # Delete
-                                        sys.stdin.read(1) # swallow ~
-                                        if cursor_pos < len(buffer):
-                                            buffer = buffer[:cursor_pos] + buffer[cursor_pos+1:]
+                        seq = char
+                        # Wait longer for the rest of the sequence
+                        while True:
+                            rlist_seq, _, _ = select.select([sys.stdin], [], [], 0.05)
+                            if rlist_seq:
+                                next_char = sys.stdin.read(1)
+                                seq += next_char
+                                # Stop reading if we hit a likely terminator
+                                if next_char in 'ABCDEFGHHJKLMOPRSTU~': break
+                                if len(seq) > 8: break
+                            else:
+                                break
+
+                        if seq in ['\x1b[D', '\x1bOD']: # Left Arrow
+                            if cursor_pos > 0: cursor_pos -= 1
+                        elif seq in ['\x1b[C', '\x1bOC']: # Right Arrow
+                            if cursor_pos < len(buffer): cursor_pos += 1
+                        elif seq in ['\x1b[H', '\x1bOH']: # Home
+                            cursor_pos = 0
+                        elif seq in ['\x1b[F', '\x1bOF']: # End
+                            cursor_pos = len(buffer)
+                        elif seq in ['\x1b[3~']: # Delete
+                            if cursor_pos < len(buffer):
+                                buffer = buffer[:cursor_pos] + buffer[cursor_pos+1:]
+                    elif ord(char) == 1: # Ctrl+A (Home)
+                        cursor_pos = 0
+                    elif ord(char) == 5: # Ctrl+E (End)
+                        cursor_pos = len(buffer)
+                    elif ord(char) == 4: # Ctrl+D (Delete)
+                        if cursor_pos < len(buffer):
+                            buffer = buffer[:cursor_pos] + buffer[cursor_pos+1:]
                     elif ord(char) >= 32: # Only printable characters
                         buffer = buffer[:cursor_pos] + char + buffer[cursor_pos:]
                         cursor_pos += 1
