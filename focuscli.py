@@ -694,34 +694,31 @@ class FocusCLI:
 
     def _handle_hierarchical_new_items(self, base_cmd_orig, items):
         """Processes a batch of items and inserts them into the task tree based on absolute indentation."""
-        if not self.triage_stack: return False
-
-        # Determine focus info
-        top_task = self.triage_stack[0]
-
-        if self.mode in ["TRIAGE"]:
-            focus_path = []
-            focus_indents = [0]
-        else:
-            _, _, focus_path = self._get_recursive_focus(top_task)
-            # Calculate absolute indentation of focus path elements
-            focus_indents = [0] # Top-level task is 0
-            curr = top_task
-            for idx in focus_path:
-                sub, _ = self._get_subtask_as_item(curr, idx)
-                focus_indents.append(focus_indents[-1] + 2)
-                curr = sub
-
         mode_label = "Prioritized Entry(s)" if base_cmd_orig == 'N' else "New Entry(s)"
+        any_changed = False
 
         # Separate items into top-level (indent 0) and hierarchical (indent > 0)
         top_level_items = [it for it in items if it['indent'] == 0]
         hier_items = [it for it in items if it['indent'] > 0]
 
-        any_changed = False
-
-        if hier_items:
+        if hier_items and self.triage_stack:
             any_changed = True
+            # Determine focus info
+            top_task = self.triage_stack[0]
+
+            if self.mode in ["TRIAGE"]:
+                focus_path = []
+                focus_indents = [0]
+            else:
+                _, _, focus_path = self._get_recursive_focus(top_task)
+                # Calculate absolute indentation of focus path elements
+                focus_indents = [0] # Top-level task is 0
+                curr = top_task
+                for idx in focus_path:
+                    sub, _ = self._get_subtask_as_item(curr, idx)
+                    focus_indents.append(focus_indents[-1] + 2)
+                    curr = sub
+
             msg = "Sub-item(s) Added"
             if self.mode == "TRIAGE":
                 # User expects leading subtasks in Triage Mode to target the first task in the stack
@@ -1199,6 +1196,7 @@ class FocusCLI:
         try:
             tty.setcbreak(fd)
             buffer = ""
+            cursor_pos = 0
             last_render_second = -1
             last_buffer = None
             last_mode = None
@@ -1246,7 +1244,17 @@ class FocusCLI:
                         self.render_exit()
 
                     print(f"\n\033[90mStatus: {self.last_msg}\033[0m")
-                    sys.stdout.write(f"\033[1;37m>> \033[0m{buffer}")
+                    prompt = ">> "
+                    sys.stdout.write(f"\033[1;37m{prompt}\033[0m{buffer}")
+
+                    # Manual cursor positioning for the prompt line
+                    # Note: This is a simplified positioning that doesn't handle multi-line cursor placement perfectly
+                    # but since we're using full-screen redraw, it's sufficient for the user to see where they are.
+                    # We move cursor back by (len(buffer) - cursor_pos)
+                    if cursor_pos < len(buffer):
+                        move_back = len(buffer) - cursor_pos
+                        sys.stdout.write(f"\033[{move_back}D")
+
                     sys.stdout.flush()
 
                     last_render_second = current_second
@@ -1284,12 +1292,14 @@ class FocusCLI:
 
                         if not cmd and self.mode != "EXIT":
                             last_mode = None # Force redraw on empty enter
+                            cursor_pos = 0
                             continue
 
                         # Restore terminal for command processing
                         termios.tcsetattr(fd, termios.TCSANOW, self.original_termios)
                         print()
                         result = self.handle_command(cmd)
+                        cursor_pos = 0
 
                         if result == "QUIT":
                             print() # Ensure newline for shell prompt
@@ -1299,21 +1309,35 @@ class FocusCLI:
                         if result == "REDRAW":
                             last_mode = None
                         continue
-                    elif char in ['\x7f', '\x08']:
-                        buffer = buffer[:-1]
+                    elif char in ['\x7f', '\x08']: # Backspace
+                        if cursor_pos > 0:
+                            buffer = buffer[:cursor_pos-1] + buffer[cursor_pos:]
+                            cursor_pos -= 1
                     elif ord(char) == 3: # Ctrl+C
                         raise KeyboardInterrupt
                     elif ord(char) == 27: # ESC sequence
-                        # Read and discard next two chars of a typical escape sequence like [A, [D etc.
-                        # This prevents them from entering the buffer and causing redraw glitches.
                         r, _, _ = select.select([sys.stdin], [], [], 0.01)
                         if r:
-                            sys.stdin.read(1) # [
-                            r, _, _ = select.select([sys.stdin], [], [], 0.01)
-                            if r:
-                                sys.stdin.read(1) # A, B, C, D...
+                            next1 = sys.stdin.read(1)
+                            if next1 == '[':
+                                r, _, _ = select.select([sys.stdin], [], [], 0.01)
+                                if r:
+                                    next2 = sys.stdin.read(1)
+                                    if next2 == 'D': # Left Arrow
+                                        if cursor_pos > 0: cursor_pos -= 1
+                                    elif next2 == 'C': # Right Arrow
+                                        if cursor_pos < len(buffer): cursor_pos += 1
+                                    elif next2 == 'H': # Home
+                                        cursor_pos = 0
+                                    elif next2 == 'F': # End
+                                        cursor_pos = len(buffer)
+                                    elif next2 == '3': # Delete
+                                        sys.stdin.read(1) # swallow ~
+                                        if cursor_pos < len(buffer):
+                                            buffer = buffer[:cursor_pos] + buffer[cursor_pos+1:]
                     elif ord(char) >= 32: # Only printable characters
-                        buffer += char
+                        buffer = buffer[:cursor_pos] + char + buffer[cursor_pos:]
+                        cursor_pos += 1
         except KeyboardInterrupt:
             self._rescue_stack("Interrupted")
         finally:
@@ -1472,6 +1496,7 @@ class FocusCLI:
         print(f"Cmds: [x] done, [x#] subtask, [e] edit, [-] cancel, [>] defer, [>>] defer all, [f] free write, [m#] mini{extra_cmds}, [N] prioritize, [n] add, [i] ignore, [t] triage, [q] quit")
 
     def handle_command(self, cmd):
+        self.last_msg = "" # Reset status message
         try:
             cmd_clean = re.sub(r'^([a-zA-Z])(\d)', r'\1 \2', cmd)
             try:
@@ -1566,35 +1591,8 @@ class FocusCLI:
                 if not items:
                     return
 
-                if not self._handle_hierarchical_new_items(base_cmd_orig, items):
-                    # Top-level stack addition/prioritization
-                    mode_label = "Prioritized Entry(s)" if base_cmd_orig == 'N' else "New Entry(s)"
-                    self.commit_to_ledger(mode_label, items)
-
-                    # Filter only items that are tasks (start with []) to add to the triage stack
-                    top_level_tasks = [it for it in items if it['line'].strip().startswith('[]')]
-
-                    if base_cmd_orig == 'N':
-                        for it in reversed(top_level_tasks):
-                            self.triage_stack.insert(0, it)
-
-                        msg = "Task(s) Added & Prioritized" if top_level_tasks else "Note(s) Added & Prioritized"
-                        if self.last_msg.startswith("Note:"):
-                             self.last_msg = f"{msg} ({self.last_msg})"
-                        else:
-                             self.last_msg = msg
-
-                        self.task_start_time = None
-                        if top_level_tasks and self.triage_stack:
-                            # Update focus tracking to the newly prioritized task
-                            self.last_recorded_focus = self.triage_stack[0]['line'].strip()
-                    else:
-                        self.triage_stack.extend(top_level_tasks)
-                        msg = "Task(s) Added" if top_level_tasks else "Note(s) Added"
-                        if self.last_msg.startswith("Note:"):
-                             self.last_msg = f"{msg} ({self.last_msg})"
-                        else:
-                             self.last_msg = msg
+                # Delegate all addition logic to the hierarchical handler
+                self._handle_hierarchical_new_items(base_cmd_orig, items)
 
                 if base_cmd_orig == 'N' and self.mode == "FOCUS":
                     if self.mini_timer_active:
