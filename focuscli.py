@@ -1136,7 +1136,7 @@ class FocusCLI:
         print(f"\n\033[1;32mFOCUS >> \033[0m{self.break_quote}")
 
         print("\n" + color + "-"*65 + "\033[0m")
-        print("Cmds: [N] prioritize, [n] add, [t] triage, [w] focus, [q] quit")
+        print("Cmds: [N#] prioritize, [n#] add, [t] triage, [w] focus, [q] quit")
 
     def update_timer_ui(self):
         """Minimal redraw of just the header to preserve terminal selection."""
@@ -1467,7 +1467,7 @@ class FocusCLI:
         if visible_count == 0:
             print("\n\033[1;36m[FREE WRITE MODE]\033[0m Everything triaged or finished.")
         else:
-            print("\nCmds: [p# #] reorder, [a# #] assign, [e#] edit, [f] free write, [i#] ignore, [N] prioritize, [n] add, [>>] defer all, [b#] break, [w] focus, [q] quit")
+            print("\nCmds: [p# #] reorder, [a# #] assign, [e#] edit, [f] free write, [i#] ignore, [N#] prioritize, [n#] add, [>>] defer all, [b#] break, [w] focus, [q] quit")
 
     def render_exit(self):
         summary = self.get_daily_summary()
@@ -1571,7 +1571,7 @@ class FocusCLI:
             print(f"  {i}: {n_color}{n}\033[0m")
         print("\n" + color + "-"*65 + "\033[0m")
         extra_cmds = ", [Space] reset" if is_mini_session else ""
-        print(f"Cmds: [x] done, [x#] subtask, [e] edit, [-] cancel, [>] defer, [>>] defer all, [f] free write, [m#] mini{extra_cmds}, [N] prioritize, [n] add, [i] ignore, [t] triage, [q] quit")
+        print(f"Cmds: [x] done, [x#] subtask, [e] edit, [-] cancel, [>] defer, [>>] defer all, [f] free write, [m#] mini{extra_cmds}, [N#] prioritize, [n#] add, [i] ignore, [t] triage, [q] quit")
 
     def handle_command(self, cmd):
         self.last_msg = "" # Reset status message
@@ -1636,7 +1636,7 @@ class FocusCLI:
                 self.enter_free_write()
                 return "REDRAW"
 
-            if base_cmd in ['n', 'N'] and self.mode in ["FOCUS", "BREAK", "TRIAGE"]:
+            if (base_cmd == 'n' or base_cmd == 'N') and self.mode in ["FOCUS", "BREAK", "TRIAGE"]:
                 target_idx = None
                 # Check for n# or N# pattern which was split into ['n', '#'] or ['N', '#']
                 if len(parts) > 1 and parts[1].isdigit():
@@ -1645,7 +1645,7 @@ class FocusCLI:
                 else:
                     remaining_parts = parts[1:]
 
-                items = None
+                items = []
                 if remaining_parts is not None:
                     if remaining_parts:
                         # One-line addition
