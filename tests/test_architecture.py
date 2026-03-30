@@ -6,7 +6,7 @@ from datetime import datetime
 # Ensure the root directory is in sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from focuscli import Item, Task, Meeting, Note, Header, parse_single_line
+from focuscli import Item, Task, Meeting, Break, Note, Header, parse_single_line
 
 class TestArchitecture(unittest.TestCase):
 
@@ -97,6 +97,23 @@ class TestArchitecture(unittest.TestCase):
         t2 = Task.from_line("[] Regular Task")
         self.assertIsInstance(t2, Task)
         self.assertNotIsInstance(t2, Meeting)
+
+    def test_break_detection(self):
+        """Break.from_line should identify break pattern"""
+
+        break_line = "[B] Lunch 12-1 PM"
+
+        # Valid breaks
+        b1 = Break.from_line(break_line)
+        self.assertIsInstance(b1, Break)
+        self.assertEqual(b1.content, "Lunch 12-1 PM")
+
+        # [B] can't be a Meeting or a Task
+        t1 = Task.from_line(break_line)
+        self.assertIsNone(t1)
+
+        m1 = Meeting.from_line(break_line)
+        self.assertIsNone(m1)
 
     def test_header_parsing(self):
         """Header.from_line should parse labels and timestamps."""
