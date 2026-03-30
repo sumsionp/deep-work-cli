@@ -8,9 +8,19 @@ import time
 # Ensure the root directory is in sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from focuscli import Item, Task, Meeting, Break
+from focuscli import FocusCLI, Item, Task, Meeting, Break
 
-class TestArchitecture(unittest.TestCase):
+class TestBreak(unittest.TestCase):
+
+    def setUp(self):
+        # Mock FILENAME to avoid creating real files during tests
+        with patch('focuscli.FILENAME', 'test-plan.txt'):
+            self.cli = FocusCLI()
+
+        # Mock dependencies to avoid side effects
+        self.cli.play_chime = MagicMock()
+        self.cli.commit_to_ledger = MagicMock()
+        self.cli._run_with_vi = MagicMock()
 
     def test_random_quote(self):
         """Break.random_quote returns a random inspirational quote"""
@@ -114,11 +124,44 @@ class TestArchitecture(unittest.TestCase):
 
     def test_specialized_is_pending(self):
         """Test that is_pending recognizes [B] status"""
-        b1 = Break.from_attributes("A Break", 0, 'B', start_time=dt.datetime.now(), end_time=None, duration=5)
+        b1 = Break.from_attributes("A Break", start_time=dt.datetime.now(), end_time=None, duration=5)
         self.assertTrue(b1.is_pending)
 
-        b2 = Break.from_attributes("A Break", 0, ' ', start_time=dt.datetime.now(), end_time=None, duration=5)
+        b2 = Break.from_attributes("A Break", start_time=dt.datetime.now(), end_time=None, duration=5)
         self.assertTrue(b2.is_pending)
+
+    def test_transition_from_break_to_focus(self):
+        """Test the transition logic from break back to Focus session."""
+        now_dt = dt.datetime.now()
+        start_dt = now_dt - dt.timedelta(minutes=5)
+        break_item = Break.from_attributes("Test Break", start_time=start_dt, duration=5)
+
+        self.cli.mode = "BREAK"
+        # task_start_time was 10 mins before the break started
+        # which is now_dt - 15 mins
+        task_start_time_float = (start_dt - dt.timedelta(minutes=10)).timestamp()
+        self.cli.task_start_time = task_start_time_float
+        self.cli.break_meeting_interrupted = True
+
+        now_float = now_dt.timestamp()
+        with patch('time.time', return_value=now_float), \
+             patch('focuscli.datetime') as mock_datetime:
+            mock_datetime.now.return_value = now_dt
+            self.cli._transition_from_break_to_focus(break_item=break_item)
+
+        self.assertEqual(self.cli.mode, "FOCUS")
+        self.assertFalse(self.cli.break_meeting_interrupted)
+        # task_start_time should have advanced by the break duration (5 mins = 300s)
+        expected_task_start = task_start_time_float + 300
+        self.assertAlmostEqual(self.cli.task_start_time, expected_task_start)
+
+    def test_transition_from_focus_to_break(self):
+        self.cli.mode = "FOCUS"
+
+        self.cli._transition_from_focus_to_break("b7")
+
+        self.assertEqual(self.cli.mode, "BREAK")
+        self.assertEqual(self.cli.triage_stack[0].duration, 7)
 
 if __name__ == '__main__':
     unittest.main()

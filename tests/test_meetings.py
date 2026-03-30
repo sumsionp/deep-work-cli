@@ -34,7 +34,7 @@ class TestMeetingInterruption(unittest.TestCase):
         # Important: The meeting item MUST be before the break item for it to be detected as "interrupting"
         # Since we are in BREAK mode, if we were focused on the meeting, it would be at index 0.
         # But here we simulate a break started via 'b' which puts break_item at index 0.
-        break_item = Break.from_attributes("Coffee Break", 0, 'B', start_time=now, duration=5)
+        break_item = Break.from_attributes("Water Break", start_time=now, duration=5)
         self.cli.triage_stack = [break_item, meeting_item]
         self.cli.mode = "BREAK"
         self.cli.break_meeting_interrupted = False
@@ -70,7 +70,7 @@ class TestMeetingInterruption(unittest.TestCase):
         self.cli.chimed_meetings.add(meeting_id)
 
         # 2. Start a break
-        break_item = Break.from_attributes("Quick Break", 0, 'B', start_time=now, duration=5)
+        break_item = Break.from_attributes("Quick Break", start_time=now, duration=5)
         self.cli.triage_stack = [break_item, meeting_item]
         self.cli.mode = "BREAK"
         self.cli.break_meeting_interrupted = False
@@ -83,34 +83,6 @@ class TestMeetingInterruption(unittest.TestCase):
         # 4. Verify results
         self.assertEqual(self.cli.mode, "BREAK")
         self.assertFalse(self.cli.break_meeting_interrupted)
-
-    def test_transition_from_break_to_focus(self):
-        """Test the transition logic from break back to Focus session."""
-        now_dt = datetime.now()
-        start_dt = now_dt - timedelta(minutes=5)
-        break_item = Break.from_attributes("Test Break", 0, 'B', start_time=start_dt, duration=5)
-
-        self.cli.mode = "BREAK"
-        # task_start_time was 10 mins before the break started
-        # which is now_dt - 15 mins
-        task_start_time_float = (start_dt - timedelta(minutes=10)).timestamp()
-        self.cli.task_start_time = task_start_time_float
-        self.cli.break_meeting_interrupted = True
-
-        now_float = now_dt.timestamp()
-        with patch('time.time', return_value=now_float), \
-             patch('focuscli.datetime') as mock_datetime:
-            mock_datetime.now.return_value = now_dt
-            self.cli._transition_from_break_to_focus(break_item=break_item)
-
-        self.assertEqual(self.cli.mode, "FOCUS")
-        self.assertFalse(self.cli.break_meeting_interrupted)
-        # task_start_time should have advanced by the break duration (5 mins = 300s)
-        expected_task_start = task_start_time_float + 300
-        self.assertAlmostEqual(self.cli.task_start_time, expected_task_start)
-
-    def test_meeting_interface(self):
-        pass
 
     def test_presense_of_start_date_end_date_duration(self):
         """Test whether at least 2 of start_date, end_date, and duration are present"""

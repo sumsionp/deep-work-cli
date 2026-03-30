@@ -360,8 +360,8 @@ class Break(Meeting):
         return self.state in ['B'] or super().is_pending
       
     @classmethod
-    def from_attributes(cls, content, start=None, end=None, duration=None):
-        return super().from_attributes(content, 0, 'B', start, end, duration)
+    def from_attributes(cls, content, start_time=None, end_time=None, duration=None):
+        return super().from_attributes(content, 0, 'B', start_time, end_time, duration)
 
 class Header(Item):
     """A ledger marker line like ------- LABEL TIMESTAMP -------"""
@@ -968,6 +968,44 @@ class FocusCLI:
         self.last_msg = "Focus Resumed"
         self.last_chime_timestamp = 0
 
+    def _transition_from_focus_to_break(self, parts):
+        if self.mode == "BREAK":
+            if self.triage_stack and isinstance(self.triage_stack[0], Break):
+                old_break = self.triage_stack.pop(0)
+                old_break.state = 'x'
+                self.commit_to_ledger("Break Completed", [old_break])
+                self._transition_from_break_to_focus(break_item=old_break)
+            else:
+                self.last_msg = "Break time overload! Doing nothing."
+                return
+        duration = 5
+        if len(parts) > 1:
+            try: duration = int(parts[1])
+            except ValueError:
+                self.last_msg = f"Invalid break duration: {parts[1]}"
+                return
+        if duration <= 0:
+            self.last_msg = "Seriously? Take a real break! 0 minutes is too short."
+            return
+
+        break_item = Break.from_attributes(
+            content=Break.random_quote(),
+            start_time=datetime.now(),
+            duration=duration
+        )
+        self.triage_stack.insert(0, break_item)
+
+        # Add to chimed_meetings to prevent redundant chime for manual breaks
+        state_str = break_item.state if break_item.state.strip() else ''
+        meeting_id = f"[{state_str}] {break_item.content}_{break_item.start_time}"
+        self.chimed_meetings.add(meeting_id)
+
+        self.mode = "BREAK"
+        self.break_meeting_interrupted = False
+        self.last_chime_timestamp = 0
+        self.commit_to_ledger(f"Break for {duration} at", [break_item])
+        return
+
     def _rescue_stack(self, label="Interrupted"):
         """Commits the current triage_stack to the ledger if it contains items."""
         if self.triage_stack:
@@ -1169,46 +1207,6 @@ class FocusCLI:
                         if isinstance(self.triage_stack[0], Break) and self.triage_stack[0].is_active():
                             self.mode = "BREAK"
                             self.last_msg = f"Break Meeting Started: {self.triage_stack[0].content}"
-
-    def enter_break_mode(self, parts):
-        if self.mode == "BREAK":
-            if self.triage_stack and isinstance(self.triage_stack[0], Break):
-                old_break = self.triage_stack.pop(0)
-                old_break.state = 'x'
-                self.commit_to_ledger("Break Completed", [old_break])
-                self._transition_from_break_to_focus(break_item=old_break)
-            else:
-                self.last_msg = "Break time overload! Doing nothing."
-                return
-        duration = 5
-        if len(parts) > 1:
-            try: duration = int(parts[1])
-            except ValueError:
-                self.last_msg = f"Invalid break duration: {parts[1]}"
-                return
-        if duration <= 0:
-            self.last_msg = "Seriously? Take a real break! 0 minutes is too short."
-            return
-
-        break_item = Break.from_attributes(
-            content=Break.random_quote(),
-            indent=0,
-            state='B',
-            start_time=datetime.now(),
-            duration=duration
-        )
-        self.triage_stack.insert(0, break_item)
-
-        # Add to chimed_meetings to prevent redundant chime for manual breaks
-        state_str = break_item.state if break_item.state.strip() else ''
-        meeting_id = f"[{state_str}] {break_item.content}_{break_item.start_time}"
-        self.chimed_meetings.add(meeting_id)
-
-        self.mode = "BREAK"
-        self.break_meeting_interrupted = False
-        self.last_chime_timestamp = 0
-        self.commit_to_ledger(f"Break for {duration} at", [break_item])
-        return
 
     def render_break(self):
         remaining = 0
@@ -1618,7 +1616,7 @@ class FocusCLI:
                         self._transition_from_break_to_focus()
                     return
                 elif base_cmd == 'b':
-                    self.enter_break_mode(parts)
+                    self._transition_from_focus_to_break(parts)
                 elif base_cmd in ['n', 'N']: pass
                 elif base_cmd in ['t', 'q']: pass
                 elif is_break_obj and base_cmd in ['x', '-', 'i', '>', '>>', 'e']:
@@ -1663,7 +1661,7 @@ class FocusCLI:
                         self.triage_stack[idx] = self._edit_item_obj(self.triage_stack[idx])
                         self.initial_stack = copy.deepcopy(self.triage_stack)
                 elif base_cmd == 'b':
-                    self.enter_break_mode(parts)
+                    self._transition_from_focus_to_break(parts)
                 elif base_cmd in ['>', '>>']:
                     if self._handle_defer_command_obj(base_cmd, parts): return
             elif self.mode in ["FOCUS", "BREAK"]:
@@ -1673,7 +1671,7 @@ class FocusCLI:
                 top_item = self.triage_stack[0]; focus_item, parent_item, focus_path = self._get_recursive_focus(top_item)
                 is_note = isinstance(focus_item, Note)
                 if base_cmd == 'b' and self.mode == "FOCUS":
-                    self.enter_break_mode(parts)
+                    self._transition_from_focus_to_break(parts)
                 if base_cmd == 'e':
                     new_item = self._edit_item_obj(focus_item)
                     if new_item != focus_item:
