@@ -461,6 +461,18 @@ class CountdownTimer(BaseTimer):
         self.last_tick = time.time()
         self.last_chime_timestamp = 0
 
+    def pause(self):
+        """Sets last_tick to current time to 'pause' any accumulated drift when logic stops/starts."""
+        self.last_tick = time.time()
+
+    def should_chime(self, interval_seconds=30):
+        if self.remaining_seconds <= 0:
+            now = time.time()
+            if now - self.last_chime_timestamp >= interval_seconds:
+                self.last_chime_timestamp = now
+                return True
+        return False
+
 
 class TimerManager:
     """Encapsulates all timer-related state and logic."""
@@ -473,6 +485,16 @@ class TimerManager:
     def update(self, mode):
         if mode == "FOCUS":
             self.mini_timer.tick()
+
+    def should_chime(self, interval_seconds=60):
+        now = time.time()
+        if now - self.last_chime_timestamp >= interval_seconds:
+            self.last_chime_timestamp = now
+            return True
+        return False
+
+    def reset_chime(self):
+        self.last_chime_timestamp = 0
 
 
 class Command:
@@ -606,8 +628,8 @@ class FocusCommand(Command):
             cli.mode = "FOCUS"
             cli.last_msg = ""
             if cli.timers.mini_timer.is_active:
-                cli.timers.mini_timer.last_tick = time.time()
-            cli.timers.last_chime_timestamp = 0
+                cli.timers.mini_timer.pause()
+            cli.timers.reset_chime()
             cli.initial_stack = copy.deepcopy(cli.triage_stack)
 
 
@@ -785,8 +807,12 @@ class CommandParser:
             parts = shlex.split(cmd_clean)
         except ValueError:
             if '"' in cmd_clean:
-                parts = shlex.split(cmd_clean + '"')
-                cli.last_msg = "Note: Added missing closing quote."
+                try:
+                    parts = shlex.split(cmd_clean + '"')
+                    cli.last_msg = "Note: Added missing closing quote."
+                except ValueError:
+                    cli.last_msg = "Error: Unbalanced quotes."
+                    return None
             else:
                 parts = cmd_string.split()
 
@@ -850,45 +876,6 @@ class FocusCLI:
     def focus_threshold(self, value):
         self.timers.focus_timer.threshold = value
 
-    @property
-    def last_chime_timestamp(self):
-        return self.timers.last_chime_timestamp
-
-    @last_chime_timestamp.setter
-    def last_chime_timestamp(self, value):
-        self.timers.last_chime_timestamp = value
-
-    @property
-    def mini_timer_active(self):
-        return self.timers.mini_timer.is_active
-
-    @mini_timer_active.setter
-    def mini_timer_active(self, value):
-        self.timers.mini_timer.is_active = value
-
-    @property
-    def mini_timer_remaining(self):
-        return self.timers.mini_timer.remaining_seconds
-
-    @mini_timer_remaining.setter
-    def mini_timer_remaining(self, value):
-        self.timers.mini_timer.remaining_seconds = value
-
-    @property
-    def mini_timer_last_tick(self):
-        return self.timers.mini_timer.last_tick
-
-    @mini_timer_last_tick.setter
-    def mini_timer_last_tick(self, value):
-        self.timers.mini_timer.last_tick = value
-
-    @property
-    def mini_timer_last_chime_timestamp(self):
-        return self.timers.mini_timer.last_chime_timestamp
-
-    @mini_timer_last_chime_timestamp.setter
-    def mini_timer_last_chime_timestamp(self, value):
-        self.timers.mini_timer.last_chime_timestamp = value
 
     def __init__(self):
         self.mode = "TRIAGE"
@@ -1461,7 +1448,7 @@ class FocusCLI:
             self.timers.mini_timer.reset(self.mini_timer_duration * 60)
         self.commit_to_ledger("Focus Session Re-started at", [])
         self.last_msg = "Focus Resumed"
-        self.timers.last_chime_timestamp = 0
+        self.timers.reset_chime()
 
     def _transition_from_focus_to_break(self, parts):
         if self.mode == "BREAK":
@@ -1497,7 +1484,7 @@ class FocusCLI:
 
         self.mode = "BREAK"
         self.break_meeting_interrupted = False
-        self.timers.last_chime_timestamp = 0
+        self.timers.reset_chime()
         self.commit_to_ledger(f"Break for {duration} at", [break_item])
         return
 
@@ -1585,12 +1572,9 @@ class FocusCLI:
     def update_mini_timer(self):
         if not self.timers.mini_timer.is_active:
             return
-        now = time.time()
         if self.mode == "FOCUS" and self.triage_stack:
-            if self.timers.mini_timer.remaining_seconds <= 0:
-                if now - self.timers.mini_timer.last_chime_timestamp >= 30:
-                    self.play_chime(sound='tick')
-                    self.timers.mini_timer.last_chime_timestamp = now
+            if self.timers.mini_timer.should_chime(interval_seconds=30):
+                self.play_chime(sound='tick')
 
     def play_chime(self, sound='chime'):
         if CHIME_COMMAND:
@@ -1620,7 +1604,6 @@ class FocusCLI:
         sys.stdout.flush()
 
     def check_chime(self):
-        now = time.time()
         if self.mode == "BREAK":
             remaining = 0
             if self.triage_stack and isinstance(self.triage_stack[0], Break):
@@ -1629,9 +1612,8 @@ class FocusCLI:
                     remaining = int((break_item.end_time - datetime.now()).total_seconds())
 
             if remaining <= 0 or self.break_meeting_interrupted:
-                if now - self.timers.last_chime_timestamp >= 60:
+                if self.timers.should_chime(interval_seconds=60):
                     self.play_chime()
-                    self.timers.last_chime_timestamp = now
                     if remaining <= 0:
                         self.last_msg = "!! BREAK EXPIRED !!"
         elif self.mode in ["FOCUS", "TRIAGE"]:
@@ -1639,10 +1621,9 @@ class FocusCLI:
             if self.mode == "FOCUS" and self.triage_stack:
                 is_meeting = isinstance(self.triage_stack[0], Meeting)
             if self.timers.focus_timer.is_exceeded():
-                if now - self.timers.last_chime_timestamp >= 60:
+                if self.timers.should_chime(interval_seconds=60):
                     if not is_meeting:
                         self.play_chime()
-                    self.timers.last_chime_timestamp = now
 
     def check_meetings(self):
         if self.mode not in ["FOCUS", "BREAK"]: return
@@ -1954,7 +1935,7 @@ class FocusCLI:
         if isinstance(self.triage_stack[0], Break):
             # Lifecycle management for Break objects at the top of the stack is handled in check_meetings
             self.mode = "BREAK"
-            self.timers.last_chime_timestamp = 0
+            self.timers.reset_chime()
             return
         now = time.time()
         if not self.timers.task_timer.is_active: self.timers.task_timer.start(now)
