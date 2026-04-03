@@ -387,23 +387,518 @@ class Header(Item):
     def to_ledger(self):
         return f"{' ' * self.indent}------- {self.label} {self.timestamp} -------"
 
+
+class BaseTimer:
+    """Base class for all timing logic."""
+    def __init__(self):
+        self.start_time = None
+        self.is_active = False
+
+    def start(self, start_time=None):
+        self.start_time = start_time if start_time else time.time()
+        self.is_active = True
+
+    def stop(self):
+        self.is_active = False
+
+    def elapsed(self):
+        if not self.start_time:
+            return 0
+        return time.time() - self.start_time
+
+
+class Stopwatch(BaseTimer):
+    """Simple elapsed time tracker (e.g., Task Timer)."""
+    pass
+
+
+class ThresholdTimer(BaseTimer):
+    """Tracks elapsed time against a threshold (e.g., Focus Timer)."""
+    def __init__(self, threshold_seconds):
+        super().__init__()
+        self.threshold = threshold_seconds
+
+    def is_exceeded(self):
+        return self.elapsed() > self.threshold
+
+    def remaining(self):
+        return self.threshold - self.elapsed()
+
+
+class CountdownTimer(BaseTimer):
+    """Tracks remaining time from a duration (e.g., Mini Timer)."""
+    def __init__(self, duration_seconds=0):
+        super().__init__()
+        self.duration = duration_seconds
+        self.remaining_seconds = duration_seconds
+        self.last_tick = 0
+        self.last_chime_timestamp = 0
+
+    def start(self, duration_seconds=None):
+        if duration_seconds is not None:
+            self.duration = duration_seconds
+            self.remaining_seconds = duration_seconds
+        self.last_tick = time.time()
+        self.last_chime_timestamp = 0
+        self.is_active = True
+
+    def tick(self):
+        if not self.is_active:
+            return
+        now = time.time()
+        if self.last_tick == 0:
+            self.last_tick = now
+        elapsed = now - self.last_tick
+        if elapsed >= 1.0:
+            ticks = int(elapsed)
+            self.remaining_seconds -= ticks
+            self.last_tick += ticks
+
+    def reset(self, duration_seconds=None):
+        if duration_seconds is not None:
+            self.duration = duration_seconds
+        self.remaining_seconds = self.duration
+        self.last_tick = time.time()
+        self.last_chime_timestamp = 0
+
+
+class TimerManager:
+    """Encapsulates all timer-related state and logic."""
+    def __init__(self, focus_threshold_seconds):
+        self.task_timer = Stopwatch()
+        self.focus_timer = ThresholdTimer(focus_threshold_seconds)
+        self.mini_timer = CountdownTimer()
+        self.last_chime_timestamp = 0
+
+    def update(self, mode):
+        if mode == "FOCUS":
+            self.mini_timer.tick()
+
+
+class Command:
+    """Base class for all CLI commands."""
+    def __init__(self, parts, original_cmd=""):
+        self.parts = parts
+        self.original_cmd = original_cmd
+
+    def execute(self, cli):
+        """Execute the command logic against the FocusCLI instance."""
+        raise NotImplementedError
+
+
+class QuitCommand(Command):
+    def execute(self, cli):
+        if cli.mode == "EXIT":
+            return "QUIT"
+
+        if cli.triage_stack:
+            fd = sys.stdin.fileno()
+            if cli.original_termios:
+                termios.tcsetattr(fd, termios.TCSADRAIN, cli.original_termios)
+            print(f"\n\033[1;33m[!] Session Interrupted.\033[0m")
+            res = input("Rescue remaining tasks to Free Write? (y/n): ").lower()
+            tty.setcbreak(fd)
+            if res == 'y':
+                cli._rescue_stack("Interrupted")
+            else:
+                cli.commit_to_ledger("Interrupted", [])
+        else:
+            if cli.mode in ["FOCUS", "BREAK"]:
+                cli.commit_to_ledger("Focus Session Complete", [])
+            else:
+                cli.commit_to_ledger("Triage", [])
+        cli.mode = "EXIT"
+        return "REDRAW"
+
+
+class TriageCommand(Command):
+    def execute(self, cli):
+        cli.commit_to_ledger("Triage Session Started at", [])
+        cli.sort_triage_stack()
+        cli.mode = "TRIAGE"
+        cli.timers.task_timer.stop()
+        if not cli.timers.focus_timer.is_active:
+            cli.timers.focus_timer.start()
+
+
+class FreeWriteCommand(Command):
+    def execute(self, cli):
+        if cli.mode in ["FOCUS", "TRIAGE", "EXIT"]:
+            cli.enter_free_write()
+            return "REDRAW"
+
+
+class AddCommand(Command):
+    def execute(self, cli):
+        base_cmd_orig = self.parts[0]
+        base_cmd = base_cmd_orig.lower()
+        target_idx = None
+        if len(self.parts) > 1 and self.parts[1].isdigit():
+            target_idx = int(self.parts[1])
+            remaining_parts = self.parts[2:]
+        else:
+            remaining_parts = self.parts[1:]
+
+        items = []
+        if remaining_parts is not None:
+            if remaining_parts:
+                full_line = " ".join(remaining_parts)
+                items = cli._process_multi_line_input([full_line])
+            else:
+                context = None
+                if (cli.mode in ["FOCUS", "BREAK"] or target_idx is not None) and cli.triage_stack:
+                    if target_idx is None or target_idx == 0:
+                        top_item = cli.triage_stack[0]
+                        focus_item, _, focus_path = cli._get_recursive_focus(top_item)
+                        context = []
+                        if focus_path:
+                            indent = ""
+                            curr = top_item
+                            for idx in focus_path:
+                                indent += "  "
+                                curr = curr.children[idx]
+                            context.append(f"{indent}{focus_item.to_ledger().strip()}")
+                    elif target_idx < len(cli.triage_stack):
+                        target_task = cli.triage_stack[target_idx]
+                        context = [target_task.to_ledger().strip()]
+                lines = cli._get_multi_line_input(context_lines=context)
+                items = cli._process_multi_line_input(lines)
+
+            if not items:
+                return
+
+        cli._handle_hierarchical_new_items(base_cmd_orig, items, target_index=target_idx)
+        if (base_cmd_orig == 'N' or target_idx is not None) and cli.mode == "FOCUS":
+            if cli.timers.mini_timer.is_active:
+                cli.timers.mini_timer.reset(cli.mini_timer_duration * 60)
+            cli.check_meetings()
+        cli.initial_stack = copy.deepcopy(cli.triage_stack)
+
+
+class FocusCommand(Command):
+    def execute(self, cli):
+        if cli.mode == "BREAK":
+            is_break_obj = cli.triage_stack and isinstance(cli.triage_stack[0], Break)
+            if is_break_obj:
+                break_item = cli.triage_stack.pop(0)
+                break_item.state = 'x'
+                cli.commit_to_ledger("Break Completed", [break_item])
+                cli._transition_from_break_to_focus(break_item=break_item)
+            else:
+                cli._transition_from_break_to_focus()
+            return "REDRAW"
+        elif cli.mode == "TRIAGE":
+            now = datetime.now()
+            new_stack = []
+            for item in cli.triage_stack:
+                if isinstance(item, Meeting) and item.end_time and item.end_time < now:
+                    item.state = 'x'
+                    for child in item.children:
+                        if isinstance(child, Task):
+                            child.state = 'x'
+                    cli.commit_to_ledger("Meeting Auto-Completed", [item])
+                    continue
+                new_stack.append(item)
+            cli.triage_stack = new_stack
+            active = cli.triage_stack
+            items_to_write = active if active != cli.initial_stack else []
+            cli.commit_to_ledger("Triage", items_to_write)
+            cli.mode = "FOCUS"
+            cli.last_msg = ""
+            if cli.timers.mini_timer.is_active:
+                cli.timers.mini_timer.last_tick = time.time()
+            cli.timers.last_chime_timestamp = 0
+            cli.initial_stack = copy.deepcopy(cli.triage_stack)
+
+
+class ResolutionCommand(Command):
+    def execute(self, cli):
+        base_cmd = self.parts[0].lower()
+        if not cli.triage_stack:
+            return
+
+        top_item = cli.triage_stack[0]
+        focus_item, parent_item, focus_path = cli._get_recursive_focus(top_item)
+        is_note = isinstance(focus_item, Note)
+
+        if is_note and base_cmd in ['x', '-', 'i']:
+            if not focus_path:
+                cli.triage_stack.pop(0)
+            cli.timers.task_timer.stop()
+            cli.initial_stack = copy.deepcopy(cli.triage_stack)
+            return
+
+        if base_cmd in ['x', '-', '>', '>>', 'i']:
+            if base_cmd in ['>', '>>']:
+                if cli._handle_defer_command_obj(base_cmd, self.parts):
+                    return
+
+            effective_cmd = '-' if base_cmd == 'i' else base_cmd
+            marker = 'x' if effective_cmd == 'x' else ('-' if effective_cmd == '-' else '>')
+            ledger_label = 'Task Completed' if effective_cmd == 'x' else (
+                'Task Cancelled' if effective_cmd == '-' else 'Task Deferred')
+            resolved_item = focus_item.clone_with_state(marker, marker) if isinstance(focus_item, Task) else focus_item
+
+            if not focus_path:
+                item_to_record = cli.triage_stack.pop(0)
+                resolved_top = item_to_record.clone_with_state(marker, marker) if isinstance(item_to_record, Task) else item_to_record
+                cli.commit_to_ledger(ledger_label, [resolved_top])
+            else:
+                cli._update_recursive_item(top_item, focus_path, resolved_item)
+                hierarchical_context = cli._get_path_pruned_item(top_item, focus_path, resolved_item)
+                if isinstance(hierarchical_context, Task) and focus_path != []:
+                    hierarchical_context.state = ' '
+                cli.commit_to_ledger(ledger_label, [hierarchical_context])
+
+            if cli.timers.mini_timer.is_active:
+                cli.timers.mini_timer.reset(cli.mini_timer_duration * 60)
+            cli.timers.task_timer.stop()
+            cli.initial_stack = copy.deepcopy(cli.triage_stack)
+
+            if not cli.triage_stack and cli.mode == "FOCUS":
+                cli.commit_to_ledger("Focus Session Complete", [])
+                cli.mode = "EXIT"
+                return "REDRAW"
+
+            is_break_obj = cli.triage_stack and isinstance(cli.triage_stack[0], Break)
+            if cli.mode == "BREAK" and is_break_obj:
+                cli._transition_from_break_to_focus(break_item=resolved_item)
+                return "REDRAW"
+
+
+class SubtaskDoneCommand(Command):
+    def execute(self, cli):
+        if cli.mode not in ["FOCUS", "BREAK"] or not cli.triage_stack:
+            return
+        match_x = re.match(r'^x(\d+)', self.original_cmd)
+        if match_x:
+            idx = int(match_x.group(1))
+            top_item = cli.triage_stack[0]
+            focus_item, _, focus_path = cli._get_recursive_focus(top_item)
+            if isinstance(focus_item, Task) and 0 <= idx < len(focus_item.children):
+                child = focus_item.children[idx]
+                if isinstance(child, Task):
+                    child.state = 'x'
+                    cli._update_recursive_item(top_item, focus_path, focus_item)
+                    if cli.timers.mini_timer.is_active:
+                        cli.timers.mini_timer.reset(cli.mini_timer_duration * 60)
+
+
+class EditCommand(Command):
+    def execute(self, cli):
+        if not cli.triage_stack:
+            return
+        if cli.mode == "TRIAGE":
+            idx = int(self.parts[1]) if len(self.parts) > 1 else 0
+            if 0 <= idx < len(cli.triage_stack):
+                cli.triage_stack[idx] = cli._edit_item_obj(cli.triage_stack[idx])
+                cli.initial_stack = copy.deepcopy(cli.triage_stack)
+        elif cli.mode in ["FOCUS", "BREAK"]:
+            top_item = cli.triage_stack[0]
+            focus_item, _, focus_path = cli._get_recursive_focus(top_item)
+            new_item = cli._edit_item_obj(focus_item)
+            if new_item != focus_item:
+                cli._update_recursive_item(top_item, focus_path, new_item)
+                cli.initial_stack = copy.deepcopy(cli.triage_stack)
+            return "REDRAW"
+
+
+class MiniTimerCommand(Command):
+    def execute(self, cli):
+        if cli.mode != "FOCUS":
+            return
+        if len(self.parts) > 1:
+            try:
+                duration = int(self.parts[1])
+                if duration <= 0:
+                    cli.timers.mini_timer.stop()
+                    cli.last_msg = "Mini Timer Stopped"
+                else:
+                    cli.timers.mini_timer.start(duration * 60)
+                    cli.mini_timer_duration = duration
+                    cli.last_msg = f"Mini Timer Started: {duration}m"
+            except ValueError:
+                cli.last_msg = f"Invalid mini timer duration: {self.parts[1]}"
+        else:
+            if cli.timers.mini_timer.is_active:
+                cli.timers.mini_timer.stop()
+                cli.last_msg = "Mini Timer Stopped"
+            else:
+                cli.timers.mini_timer.start(2 * 60)
+                cli.mini_timer_duration = 2
+                cli.last_msg = "Mini Timer Started: 2m"
+
+
+class BreakCommand(Command):
+    def execute(self, cli):
+        cli._transition_from_focus_to_break(self.parts)
+
+
+class ReorderCommand(Command):
+    def execute(self, cli):
+        if cli.mode != "TRIAGE" or len(self.parts) < 2:
+            return
+        src = int(self.parts[1])
+        dest = int(self.parts[2]) if len(self.parts) > 2 else 0
+        if 0 <= src < len(cli.triage_stack) and 0 <= dest < len(cli.triage_stack):
+            cli.triage_stack.insert(dest, cli.triage_stack.pop(src))
+
+
+class AssignCommand(Command):
+    def execute(self, cli):
+        if cli.mode != "TRIAGE" or len(self.parts) < 3:
+            return
+        src_str, dest_idx = self.parts[1], int(self.parts[2])
+        if 0 <= dest_idx < len(cli.triage_stack):
+            if '.' in src_str:
+                p_idx, c_idx = map(int, src_str.split('.'))
+                if 0 <= p_idx < len(cli.triage_stack) and 0 <= c_idx < len(cli.triage_stack[p_idx].children):
+                    item = cli.triage_stack[p_idx].children.pop(c_idx)
+                    item.parent = cli.triage_stack[dest_idx]
+                    cli.triage_stack[dest_idx].children.append(item)
+            else:
+                src_idx = int(src_str)
+                if 0 <= src_idx < len(cli.triage_stack):
+                    item = cli.triage_stack.pop(src_idx)
+                    item.parent = cli.triage_stack[dest_idx]
+                    cli.triage_stack[dest_idx].children.append(item)
+
+
+class IgnoreCommand(Command):
+    def execute(self, cli):
+        if cli.mode == "TRIAGE":
+            idx = int(self.parts[1]) if len(self.parts) > 1 else (0 if len(cli.triage_stack) == 1 else None)
+            if idx is not None and 0 <= idx < len(cli.triage_stack):
+                item = cli.triage_stack.pop(idx)
+                if isinstance(item, Task):
+                    resolved_item = item.clone_with_state('-', '-')
+                    cli.commit_to_ledger("Cancelled", [resolved_item])
+        elif cli.mode in ["FOCUS", "BREAK"]:
+            return ResolutionCommand(self.parts).execute(cli)
+
+
+class CommandParser:
+    @staticmethod
+    def parse(cli, cmd_string, mode):
+        cmd_clean = re.sub(r'^([a-zA-Z])(\d)', r'\1 \2', cmd_string)
+        try:
+            parts = shlex.split(cmd_clean)
+        except ValueError:
+            if '"' in cmd_clean:
+                parts = shlex.split(cmd_clean + '"')
+                cli.last_msg = "Note: Added missing closing quote."
+            else:
+                parts = cmd_string.split()
+
+        if not parts:
+            return None
+
+        base_cmd = parts[0].lower()
+
+        if mode == "EXIT":
+            if base_cmd == 'q': return QuitCommand(parts)
+            if base_cmd == 'w': return FreeWriteCommand(parts)
+            return None
+
+        if base_cmd == 'q': return QuitCommand(parts)
+        if base_cmd == 't': return TriageCommand(parts)
+        if base_cmd == 'w': return FreeWriteCommand(parts)
+        if base_cmd in ['n', 'N']: return AddCommand(parts)
+        if base_cmd == 'f': return FocusCommand(parts)
+        if base_cmd == 'e': return EditCommand(parts)
+        if base_cmd == 'b': return BreakCommand(parts)
+        if re.match(r'^x\d+', cmd_string): return SubtaskDoneCommand(parts, original_cmd=cmd_string)
+        if base_cmd in ['x', '-', '>', '>>']: return ResolutionCommand(parts)
+        if base_cmd == 'i': return IgnoreCommand(parts)
+        if base_cmd == 'm': return MiniTimerCommand(parts)
+        if base_cmd == 'p': return ReorderCommand(parts)
+        if base_cmd == 'a': return AssignCommand(parts)
+
+        return None
+
+
 class FocusCLI:
+    @property
+    def task_start_time(self):
+        return self.timers.task_timer.start_time
+
+    @task_start_time.setter
+    def task_start_time(self, value):
+        self.timers.task_timer.start_time = value
+        if value is not None:
+            self.timers.task_timer.is_active = True
+        else:
+            self.timers.task_timer.is_active = False
+
+    @property
+    def focus_start_time(self):
+        return self.timers.focus_timer.start_time
+
+    @focus_start_time.setter
+    def focus_start_time(self, value):
+        self.timers.focus_timer.start_time = value
+        if value is not None:
+            self.timers.focus_timer.is_active = True
+        else:
+            self.timers.focus_timer.is_active = False
+
+    @property
+    def focus_threshold(self):
+        return self.timers.focus_timer.threshold
+
+    @focus_threshold.setter
+    def focus_threshold(self, value):
+        self.timers.focus_timer.threshold = value
+
+    @property
+    def last_chime_timestamp(self):
+        return self.timers.last_chime_timestamp
+
+    @last_chime_timestamp.setter
+    def last_chime_timestamp(self, value):
+        self.timers.last_chime_timestamp = value
+
+    @property
+    def mini_timer_active(self):
+        return self.timers.mini_timer.is_active
+
+    @mini_timer_active.setter
+    def mini_timer_active(self, value):
+        self.timers.mini_timer.is_active = value
+
+    @property
+    def mini_timer_remaining(self):
+        return self.timers.mini_timer.remaining_seconds
+
+    @mini_timer_remaining.setter
+    def mini_timer_remaining(self, value):
+        self.timers.mini_timer.remaining_seconds = value
+
+    @property
+    def mini_timer_last_tick(self):
+        return self.timers.mini_timer.last_tick
+
+    @mini_timer_last_tick.setter
+    def mini_timer_last_tick(self, value):
+        self.timers.mini_timer.last_tick = value
+
+    @property
+    def mini_timer_last_chime_timestamp(self):
+        return self.timers.mini_timer.last_chime_timestamp
+
+    @mini_timer_last_chime_timestamp.setter
+    def mini_timer_last_chime_timestamp(self, value):
+        self.timers.mini_timer.last_chime_timestamp = value
+
     def __init__(self):
         self.mode = "TRIAGE"
         self.triage_stack = []
         self.initial_stack = []
         self.last_msg = "FocusCLI Ready."
-        self.task_start_time = None
-        self.focus_start_time = None
-        self.focus_threshold = ALERT_THRESHOLD
-        self.last_chime_timestamp = 0
+        self.timers = TimerManager(ALERT_THRESHOLD)
         self.chimed_meetings = set()
         self.original_termios = None
-        self.mini_timer_active = False
         self.mini_timer_duration = 2
-        self.mini_timer_remaining = 0
-        self.mini_timer_last_tick = 0
-        self.mini_timer_last_chime_timestamp = 0
         self.mini_timer_was_meeting = False
         self.last_recorded_focus = None
         self.break_meeting_interrupted = False
@@ -473,6 +968,8 @@ class FocusCLI:
         self.load_context()
         self.sort_triage_stack()
         self.initial_stack = copy.deepcopy(self.triage_stack)
+        if not self.timers.focus_timer.is_active:
+            self.timers.focus_timer.start()
 
     def sort_triage_stack(self):
         """Move non-active meetings to the bottom, sorted by start time, while keeping active meetings at top."""
@@ -759,7 +1256,7 @@ class FocusCLI:
                 self.commit_to_ledger(f"Deferred to {res}", [l_item])
 
         self.commit_to_ledger("Triage", self.triage_stack)
-        self.task_start_time = None
+        self.timers.task_timer.stop()
         self.initial_stack = copy.deepcopy(self.triage_stack)
         return True
 
@@ -902,7 +1399,7 @@ class FocusCLI:
                 self.commit_to_ledger(mode_label, [target_task])
                 self.last_recorded_focus = target_task.content.strip()
                 if base_cmd_orig == 'N':
-                    self.task_start_time = None
+                    self.timers.task_timer.stop()
 
                 if self.last_msg.startswith("Note:"):
                     self.last_msg = f"{msg} ({self.last_msg})"
@@ -932,7 +1429,7 @@ class FocusCLI:
 
                 if insert_idx == 0 and top_level_tasks:
                     self.last_recorded_focus = self.triage_stack[0].content.strip()
-                    self.task_start_time = None
+                    self.timers.task_timer.stop()
                 msg = "Task(s) Added" if top_level_tasks else "Note(s) Added"
             elif base_cmd_orig == 'N':
                 insert_idx = 1 if (hier_items and self.triage_stack) else 0
@@ -940,7 +1437,7 @@ class FocusCLI:
                     self.triage_stack.insert(insert_idx, it)
                 if insert_idx == 0 and top_level_tasks:
                     self.last_recorded_focus = self.triage_stack[0].content.strip()
-                    self.task_start_time = None
+                    self.timers.task_timer.stop()
                 msg = "Task(s) Added & Prioritized" if top_level_tasks else "Note(s) Added & Prioritized"
             else:
                 self.triage_stack.extend(top_level_tasks)
@@ -954,19 +1451,17 @@ class FocusCLI:
         now = time.time()
         if break_item and break_item.start_time:
             break_total_time = (datetime.now() - break_item.start_time).total_seconds()
-            if self.task_start_time:
-                self.task_start_time += break_total_time
+            if self.timers.task_timer.is_active:
+                self.timers.task_timer.start_time += break_total_time
 
-        self.focus_start_time = now
+        self.timers.focus_timer.start(now)
         self.mode = "FOCUS"
         self.break_meeting_interrupted = False
-        if self.mini_timer_active:
-            self.mini_timer_remaining = self.mini_timer_duration * 60
-            self.mini_timer_last_tick = now
-            self.mini_timer_last_chime_timestamp = 0
+        if self.timers.mini_timer.is_active:
+            self.timers.mini_timer.reset(self.mini_timer_duration * 60)
         self.commit_to_ledger("Focus Session Re-started at", [])
         self.last_msg = "Focus Resumed"
-        self.last_chime_timestamp = 0
+        self.timers.last_chime_timestamp = 0
 
     def _transition_from_focus_to_break(self, parts):
         if self.mode == "BREAK":
@@ -1002,7 +1497,7 @@ class FocusCLI:
 
         self.mode = "BREAK"
         self.break_meeting_interrupted = False
-        self.last_chime_timestamp = 0
+        self.timers.last_chime_timestamp = 0
         self.commit_to_ledger(f"Break for {duration} at", [break_item])
         return
 
@@ -1088,23 +1583,14 @@ class FocusCLI:
                     f.write(f"{item.to_ledger()}\n")
 
     def update_mini_timer(self):
-        if not self.mini_timer_active:
+        if not self.timers.mini_timer.is_active:
             return
         now = time.time()
         if self.mode == "FOCUS" and self.triage_stack:
-            if self.mini_timer_last_tick == 0:
-                self.mini_timer_last_tick = now
-            elapsed = now - self.mini_timer_last_tick
-            if elapsed >= 1.0:
-                ticks = int(elapsed)
-                self.mini_timer_remaining -= ticks
-                self.mini_timer_last_tick += ticks
-            if self.mini_timer_remaining <= 0:
-                if now - self.mini_timer_last_chime_timestamp >= 30:
+            if self.timers.mini_timer.remaining_seconds <= 0:
+                if now - self.timers.mini_timer.last_chime_timestamp >= 30:
                     self.play_chime(sound='tick')
-                    self.mini_timer_last_chime_timestamp = now
-        else:
-            self.mini_timer_last_tick = now
+                    self.timers.mini_timer.last_chime_timestamp = now
 
     def play_chime(self, sound='chime'):
         if CHIME_COMMAND:
@@ -1143,22 +1629,20 @@ class FocusCLI:
                     remaining = int((break_item.end_time - datetime.now()).total_seconds())
 
             if remaining <= 0 or self.break_meeting_interrupted:
-                if now - self.last_chime_timestamp >= 60:
+                if now - self.timers.last_chime_timestamp >= 60:
                     self.play_chime()
-                    self.last_chime_timestamp = now
+                    self.timers.last_chime_timestamp = now
                     if remaining <= 0:
                         self.last_msg = "!! BREAK EXPIRED !!"
         elif self.mode in ["FOCUS", "TRIAGE"]:
             is_meeting = False
             if self.mode == "FOCUS" and self.triage_stack:
                 is_meeting = isinstance(self.triage_stack[0], Meeting)
-            if self.focus_start_time:
-                focus_elapsed = now - self.focus_start_time
-                if focus_elapsed >= self.focus_threshold:
-                    if now - self.last_chime_timestamp >= 60:
-                        if not is_meeting:
-                            self.play_chime()
-                        self.last_chime_timestamp = now
+            if self.timers.focus_timer.is_exceeded():
+                if now - self.timers.last_chime_timestamp >= 60:
+                    if not is_meeting:
+                        self.play_chime()
+                    self.timers.last_chime_timestamp = now
 
     def check_meetings(self):
         if self.mode not in ["FOCUS", "BREAK"]: return
@@ -1197,7 +1681,7 @@ class FocusCLI:
 
                         if not is_current_active_meeting:
                             self.triage_stack.insert(0, self.triage_stack.pop(i))
-                            self.task_start_time = None
+                            self.timers.task_timer.stop()
                             self.last_msg = f"Meeting Started: {self.triage_stack[0].content}"
                             found_active_meeting = True
 
@@ -1235,22 +1719,20 @@ class FocusCLI:
         sys.stdout.write("\033[s")
         now = time.time()
         if self.mode == "TRIAGE":
-            focus_elapsed = int(now - (self.focus_start_time if self.focus_start_time else now))
-            focus_remaining = self.focus_threshold - focus_elapsed
+            focus_remaining = self.timers.focus_timer.remaining()
             f_sign = "-" if focus_remaining < 0 else ""
-            fm, fs = divmod(abs(focus_remaining), 60)
+            fm, fs = divmod(abs(int(focus_remaining)), 60)
             f_color = "\033[1;31m" if focus_remaining <= 0 else ""
             timer_str = f" | Focus: {f_color}{f_sign}{fm:02d}:{fs:02d}\033[0m"
             sys.stdout.write("\033[1;1H" + f"\033[K--- TRIAGE: {os.path.basename(FILENAME)}{timer_str} ---")
         elif self.mode == "FOCUS":
             if not self.triage_stack: return
-            if self.task_start_time is None: self.task_start_time = now
-            if self.focus_start_time is None: self.focus_start_time = now
+            if not self.timers.task_timer.is_active: self.timers.task_timer.start(now)
+            if not self.timers.focus_timer.is_active: self.timers.focus_timer.start(now)
             top_item = self.triage_stack[0]
-            focus_elapsed = int(now - self.focus_start_time)
-            focus_remaining = self.focus_threshold - focus_elapsed
+            focus_remaining = self.timers.focus_timer.remaining()
             f_sign = "-" if focus_remaining < 0 else ""
-            fm, fs = divmod(abs(focus_remaining), 60)
+            fm, fs = divmod(abs(int(focus_remaining)), 60)
             meeting_timer_str = ""
             if isinstance(top_item, Meeting) and top_item.end_time:
                 now_dt = datetime.now()
@@ -1260,19 +1742,19 @@ class FocusCLI:
                 meeting_timer_str = f" | Meeting: {m_sign}{mm:02d}:{ms:02d}"
             mini_timer_str = ""
             is_mini_session = False
-            if self.mini_timer_active and self.triage_stack:
+            if self.timers.mini_timer.is_active and self.triage_stack:
                 is_mini_session = True
-                sign = "-" if self.mini_timer_remaining < 0 else ""
-                mm, ms = divmod(abs(self.mini_timer_remaining), 60)
+                sign = "-" if self.timers.mini_timer.remaining_seconds < 0 else ""
+                mm, ms = divmod(abs(self.timers.mini_timer.remaining_seconds), 60)
                 mini_timer_str = f" | Mini: {sign}{mm:02d}:{ms:02d}"
             task_timer_str = ""
             if not (meeting_timer_str and mini_timer_str):
-                task_elapsed = int(now - self.task_start_time)
+                task_elapsed = int(self.timers.task_timer.elapsed())
                 tm, ts = divmod(task_elapsed, 60)
                 task_timer_str = f" | Task: {tm:02d}:{ts:02d}"
             color = "\033[1;34m"
             header = " MINI TASK SESSION " if is_mini_session else " FOCUS SESSION "
-            if focus_elapsed > self.focus_threshold:
+            if self.timers.focus_timer.is_exceeded():
                 color = "\033[1;31;7m"
                 header = " !! BREAK TIME !! "
             sys.stdout.write("\033[1;1H" + f"{color}{'='*65}\033[0m")
@@ -1341,7 +1823,6 @@ class FocusCLI:
         signal.signal(signal.SIGTERM, signal_handler)
         if not os.path.exists(FILENAME): self.rescue_previous_tasks()
         self.enter_free_write()
-        self.focus_start_time = time.time()
         try:
             tty.setcbreak(fd)
             buffer = ""; cursor_pos = 0; last_render_second = -1; last_buffer = None
@@ -1356,9 +1837,8 @@ class FocusCLI:
                     if break_item.end_time:
                         is_expired = (datetime.now() >= break_item.end_time)
                 is_exceeded = False
-                if self.mode == "FOCUS" and self.focus_start_time:
-                    focus_elapsed = now - self.focus_start_time
-                    is_exceeded = (focus_elapsed > self.focus_threshold)
+                if self.mode == "FOCUS" and self.timers.focus_timer.is_active:
+                    is_exceeded = self.timers.focus_timer.is_exceeded()
                 structural_change = (buffer != last_buffer or cursor_pos != last_cursor_pos or self.mode != last_mode or self.last_msg != last_msg or current_task != last_task or is_expired != last_expired or is_exceeded != last_exceeded)
                 if structural_change:
                     sys.stdout.write("\033[H\033[2J")
@@ -1380,16 +1860,15 @@ class FocusCLI:
                     last_render_second = current_second
                 if self.mode in ["FOCUS", "BREAK", "TRIAGE"]: self.check_chime()
                 if self.mode in ["FOCUS", "BREAK"]:
+                    self.timers.update(self.mode)
                     self.check_meetings()
                     if self.mode == "FOCUS": self.update_mini_timer()
                 rlist, _, _ = select.select([fd], [], [], 0.1)
                 if rlist:
                     char = self._read_keypress(fd)
                     if not char: continue
-                    if char == ' ' and self.mode == "FOCUS" and self.mini_timer_active and not buffer:
-                        self.mini_timer_remaining = self.mini_timer_duration * 60
-                        self.mini_timer_last_tick = time.time()
-                        self.mini_timer_last_chime_timestamp = 0
+                    if char == ' ' and self.mode == "FOCUS" and self.timers.mini_timer.is_active and not buffer:
+                        self.timers.mini_timer.reset(self.mini_timer_duration * 60)
                         self.last_msg = "Mini Timer Reset"
                     elif char == '\n' or char == '\r':
                         cmd = buffer.strip(); buffer = ""
@@ -1423,10 +1902,8 @@ class FocusCLI:
         finally: termios.tcsetattr(fd, termios.TCSADRAIN, self.original_termios)
 
     def render_triage(self):
-        now = time.time()
-        focus_elapsed = int(now - (self.focus_start_time if self.focus_start_time else now))
-        focus_remaining = self.focus_threshold - focus_elapsed
-        f_sign = "-" if focus_remaining < 0 else ""; fm, fs = divmod(abs(focus_remaining), 60)
+        focus_remaining = self.timers.focus_timer.remaining()
+        f_sign = "-" if focus_remaining < 0 else ""; fm, fs = divmod(abs(int(focus_remaining)), 60)
         f_color = "\033[1;31m" if focus_remaining <= 0 else ""
         timer_str = f" | Focus: {f_color}{f_sign}{fm:02d}:{fs:02d}\033[0m"
         print(f"--- TRIAGE: {os.path.basename(FILENAME)}{timer_str} ---")
@@ -1477,15 +1954,14 @@ class FocusCLI:
         if isinstance(self.triage_stack[0], Break):
             # Lifecycle management for Break objects at the top of the stack is handled in check_meetings
             self.mode = "BREAK"
-            self.last_chime_timestamp = 0
+            self.timers.last_chime_timestamp = 0
             return
         now = time.time()
-        if self.task_start_time is None: self.task_start_time = now
-        if self.focus_start_time is None: self.focus_start_time = now
-        task_elapsed = int(now - self.task_start_time); tm, ts = divmod(task_elapsed, 60)
-        focus_elapsed = int(now - self.focus_start_time)
-        focus_remaining = self.focus_threshold - focus_elapsed
-        f_sign = "-" if focus_remaining < 0 else ""; fm, fs = divmod(abs(focus_remaining), 60)
+        if not self.timers.task_timer.is_active: self.timers.task_timer.start(now)
+        if not self.timers.focus_timer.is_active: self.timers.focus_timer.start(now)
+        task_elapsed = int(self.timers.task_timer.elapsed()); tm, ts = divmod(task_elapsed, 60)
+        focus_remaining = self.timers.focus_timer.remaining()
+        f_sign = "-" if focus_remaining < 0 else ""; fm, fs = divmod(abs(int(focus_remaining)), 60)
         top_item = self.triage_stack[0]
         focus_item, parent_item, focus_path = self._get_recursive_focus(top_item)
         root_id = top_item.to_ledger().split('\n')[0].strip()
@@ -1510,14 +1986,14 @@ class FocusCLI:
             m_sign = "-" if remaining < 0 else ""; mm, ms = divmod(abs(remaining), 60)
             meeting_timer_str = f" | Meeting: {m_sign}{mm:02d}:{ms:02d}"
         mini_timer_str = ""; is_mini_session = False
-        if self.mini_timer_active and self.triage_stack:
-            is_mini_session = True; sign = "-" if self.mini_timer_remaining < 0 else ""
-            mm, ms = divmod(abs(self.mini_timer_remaining), 60); mini_timer_str = f" | Mini: {sign}{mm:02d}:{ms:02d}"
+        if self.timers.mini_timer.is_active and self.triage_stack:
+            is_mini_session = True; sign = "-" if self.timers.mini_timer.remaining_seconds < 0 else ""
+            mm, ms = divmod(abs(self.timers.mini_timer.remaining_seconds), 60); mini_timer_str = f" | Mini: {sign}{mm:02d}:{ms:02d}"
         task_timer_str = ""
         if not (meeting_timer_str and mini_timer_str):
-            task_elapsed = int(now - self.task_start_time); tm, ts = divmod(task_elapsed, 60); task_timer_str = f" | Task: {tm:02d}:{ts:02d}"
+            task_elapsed = int(self.timers.task_timer.elapsed()); tm, ts = divmod(task_elapsed, 60); task_timer_str = f" | Task: {tm:02d}:{ts:02d}"
         color = "\033[1;34m"; header = " MINI TASK SESSION " if is_mini_session else " FOCUS SESSION "
-        if focus_elapsed > self.focus_threshold: color = "\033[1;31;7m"; header = " !! BREAK TIME !! "
+        if self.timers.focus_timer.is_exceeded(): color = "\033[1;31;7m"; header = " !! BREAK TIME !! "
         is_task = isinstance(t, Task); print(color + "="*65 + "\033[0m")
         print(f"{color}{header}\033[0m{task_timer_str} | Focus: {f_sign}{fm:02d}:{fs:02d}{meeting_timer_str}{mini_timer_str}")
         print(color + "="*65 + "\033[0m")
@@ -1539,204 +2015,22 @@ class FocusCLI:
         extra_cmds = ", [Space] reset" if is_mini_session else ""
         print(f"Cmds: [x] done, [x#] subtask, [e] edit, [-] cancel, [>] defer, [>>] defer all, [w] free write, [m#] mini{extra_cmds}, [N#] prioritize, [n#] add, [i] ignore, [t] triage, [q] quit")
 
-    def handle_command(self, cmd):
+    def handle_command(self, cmd_string):
         self.last_msg = ""
         try:
-            cmd_clean = re.sub(r'^([a-zA-Z])(\d)', r'\1 \2', cmd)
-            try: parts = shlex.split(cmd_clean)
-            except ValueError:
-                if '"' in cmd_clean:
-                    try: parts = shlex.split(cmd_clean + '"'); self.last_msg = "Note: Added missing closing quote."
-                    except ValueError: self.last_msg = "Error: Unbalanced quotes."; return
-                else: parts = cmd_clean.split()
-            if self.mode == "EXIT":
-                if not parts or parts[0].lower() == 'q': return "QUIT"
-                if parts[0].lower() == 'w': self.enter_free_write(); return "REDRAW"
-                return
-            if not parts: return
-            base_cmd_orig = parts[0]; base_cmd = base_cmd_orig.lower()
-            if base_cmd == 'q':
-                if self.triage_stack:
-                    fd = sys.stdin.fileno()
-                    if self.original_termios: termios.tcsetattr(fd, termios.TCSADRAIN, self.original_termios)
-                    print(f"\n\033[1;33m[!] Session Interrupted.\033[0m")
-                    res = input("Rescue remaining tasks to Free Write? (y/n): ").lower(); tty.setcbreak(fd)
-                    if res == 'y': self._rescue_stack("Interrupted")
-                    else: self.commit_to_ledger("Interrupted", [])
-                else:
-                    if self.mode in ["FOCUS", "BREAK"]: self.commit_to_ledger("Focus Session Complete", [])
-                    else: self.commit_to_ledger("Triage", [])
-                self.mode = "EXIT"; return "REDRAW"
-            if base_cmd == 't': 
-                self.commit_to_ledger("Triage Session Started at", []); self.sort_triage_stack()
-                self.mode = "TRIAGE"; self.task_start_time = None
-                if self.focus_start_time is None: self.focus_start_time = time.time()
-                return
-            if base_cmd == 'w' and self.mode in ["FOCUS", "TRIAGE"]: self.enter_free_write(); return "REDRAW"
-            if (base_cmd == 'n' or base_cmd == 'N') and self.mode in ["FOCUS", "BREAK", "TRIAGE"]:
-                target_idx = None
-                if len(parts) > 1 and parts[1].isdigit(): target_idx = int(parts[1]); remaining_parts = parts[2:]
-                else: remaining_parts = parts[1:]
-                items = []
-                if remaining_parts is not None:
-                    if remaining_parts:
-                        full_line = " ".join(remaining_parts)
-                        items = self._process_multi_line_input([full_line])
-                    else:
-                        context = None
-                        if (self.mode in ["FOCUS", "BREAK"] or target_idx is not None) and self.triage_stack:
-                            if target_idx is None or target_idx == 0:
-                                top_item = self.triage_stack[0]; focus_item, _, focus_path = self._get_recursive_focus(top_item)
-                                context = []
-                                if focus_path:
-                                    indent = ""; curr = top_item
-                                    for idx in focus_path: indent += "  "; curr = curr.children[idx]
-                                    context.append(f"{indent}{focus_item.to_ledger().strip()}")
-                            elif target_idx < len(self.triage_stack):
-                                target_task = self.triage_stack[target_idx]; context = [target_task.to_ledger().strip()]
-                        lines = self._get_multi_line_input(context_lines=context)
-                        items = self._process_multi_line_input(lines)
-                    if not items: return
-                self._handle_hierarchical_new_items(base_cmd_orig, items, target_index=target_idx)
-                if (base_cmd_orig == 'N' or target_idx is not None) and self.mode == "FOCUS":
-                    if self.mini_timer_active:
-                        self.mini_timer_remaining = self.mini_timer_duration * 60
-                        self.mini_timer_last_tick = time.time(); self.mini_timer_last_chime_timestamp = 0
-                    self.check_meetings()
-                self.initial_stack = copy.deepcopy(self.triage_stack); return
-            if self.mode == "BREAK":
-                is_break_obj = self.triage_stack and isinstance(self.triage_stack[0], Break)
-                if base_cmd == 'f':
-                    if is_break_obj:
-                        break_item = self.triage_stack.pop(0)
-                        break_item.state = 'x'
-                        self.commit_to_ledger("Break Completed", [break_item])
-                        self._transition_from_break_to_focus(break_item=break_item)
-                    else:
-                        self._transition_from_break_to_focus()
-                    return
-                elif base_cmd == 'b':
-                    self._transition_from_focus_to_break(parts)
-                elif base_cmd in ['n', 'N']: pass
-                elif base_cmd in ['t', 'q']: pass
-                elif is_break_obj and base_cmd in ['x', '-', 'i', '>', '>>', 'e']:
-                    pass # Handled below
-                else: self.last_msg = "Command disabled during break."; return
-            if self.mode == "TRIAGE":
-                if base_cmd == 'f':
-                    now = datetime.now(); new_stack = []
-                    for item in self.triage_stack:
-                        if isinstance(item, Meeting) and item.end_time and item.end_time < now:
-                            item.state = 'x'
-                            for child in item.children:
-                                if isinstance(child, Task): child.state = 'x'
-                            self.commit_to_ledger("Meeting Auto-Completed", [item]); continue
-                        new_stack.append(item)
-                    self.triage_stack = new_stack; active = self.triage_stack
-                    items_to_write = active if active != self.initial_stack else []
-                    self.commit_to_ledger("Triage", items_to_write)
-                    self.triage_stack = active; self.mode = "FOCUS"; self.last_msg = ""
-                    if self.mini_timer_active: self.mini_timer_last_tick = time.time()
-                    self.last_chime_timestamp = 0; self.initial_stack = copy.deepcopy(self.triage_stack)
-                elif base_cmd == 'i':
-                    idx = int(parts[1]) if len(parts) > 1 else (0 if len(self.triage_stack) == 1 else None)
-                    if idx is not None:
-                        item = self.triage_stack.pop(idx)
-                        if isinstance(item, Task): resolved_item = item.clone_with_state('-', '-'); self.commit_to_ledger("Cancelled", [resolved_item])
-                elif base_cmd == 'p':
-                    src, dest = int(parts[1]), int(parts[2]) if len(parts) > 2 else 0
-                    self.triage_stack.insert(dest, self.triage_stack.pop(src))
-                elif base_cmd == 'a':
-                    src_str, dest_idx = parts[1], int(parts[2])
-                    if '.' in src_str:
-                        p_idx, c_idx = map(int, src_str.split('.'))
-                        item = self.triage_stack[p_idx].children.pop(c_idx); item.parent = self.triage_stack[dest_idx]
-                        self.triage_stack[dest_idx].children.append(item)
-                    else:
-                        item = self.triage_stack.pop(int(src_str)); item.parent = self.triage_stack[dest_idx]
-                        self.triage_stack[dest_idx].children.append(item)
-                elif base_cmd == 'e':
-                    idx = int(parts[1]) if len(parts) > 1 else 0
-                    if 0 <= idx < len(self.triage_stack):
-                        self.triage_stack[idx] = self._edit_item_obj(self.triage_stack[idx])
-                        self.initial_stack = copy.deepcopy(self.triage_stack)
-                elif base_cmd == 'b':
-                    self._transition_from_focus_to_break(parts)
-                elif base_cmd in ['>', '>>']:
-                    if self._handle_defer_command_obj(base_cmd, parts): return
-            elif self.mode in ["FOCUS", "BREAK"]:
-                if not self.triage_stack:
-                    if base_cmd == 'q': return "QUIT"
-                    if base_cmd != 'n': return
-                top_item = self.triage_stack[0]; focus_item, parent_item, focus_path = self._get_recursive_focus(top_item)
-                is_note = isinstance(focus_item, Note)
-                if base_cmd == 'b' and self.mode == "FOCUS":
-                    self._transition_from_focus_to_break(parts)
-                if base_cmd == 'e':
-                    new_item = self._edit_item_obj(focus_item)
-                    if new_item != focus_item:
-                        self._update_recursive_item(top_item, focus_path, new_item)
-                        self.initial_stack = copy.deepcopy(self.triage_stack)
-                    return
-                if base_cmd == 'm' and self.mode == "FOCUS":
-                    if len(parts) > 1:
-                        try:
-                            duration = int(parts[1])
-                            if duration <= 0: self.mini_timer_active = False; self.last_msg = "Mini Timer Stopped"
-                            else:
-                                self.mini_timer_active = True; self.mini_timer_duration = duration; self.mini_timer_remaining = duration * 60
-                                self.mini_timer_last_tick = time.time(); self.mini_timer_last_chime_timestamp = 0
-                                self.last_msg = f"Mini Timer Started: {duration}m"
-                        except ValueError: self.last_msg = f"Invalid mini timer duration: {parts[1]}"
-                    else:
-                        if self.mini_timer_active: self.mini_timer_active = False; self.last_msg = "Mini Timer Stopped"
-                        else:
-                            self.mini_timer_active = True; self.mini_timer_duration = 2; self.mini_timer_remaining = 2 * 60
-                            self.mini_timer_last_tick = time.time(); self.mini_timer_last_chime_timestamp = 0
-                            self.last_msg = "Mini Timer Started: 2m"
-                    return
-                match_x = re.match(r'^x(\d+)', cmd)
-                if match_x:
-                    idx = int(match_x.group(1))
-                    if isinstance(focus_item, Task) and 0 <= idx < len(focus_item.children):
-                        child = focus_item.children[idx]
-                        if isinstance(child, Task):
-                            child.state = 'x'
-                            self._update_recursive_item(top_item, focus_path, focus_item)
-                            if self.mini_timer_active:
-                                self.mini_timer_remaining = self.mini_timer_duration * 60
-                                self.mini_timer_last_tick = time.time(); self.mini_timer_last_chime_timestamp = 0
-                    return
-                if is_note and base_cmd in ['x', '-', 'i']:
-                    if not focus_path: self.triage_stack.pop(0)
-                    else: pass
-                    self.task_start_time = None; self.initial_stack = copy.deepcopy(self.triage_stack); return
-                if base_cmd in ['x', '-', '>', '>>', 'i']:
-                    if base_cmd == '>>' or base_cmd == '>':
-                        if self._handle_defer_command_obj(base_cmd, parts): return
-                    effective_cmd = '-' if base_cmd == 'i' else base_cmd
-                    marker = 'x' if effective_cmd == 'x' else ('-' if effective_cmd == '-' else '>')
-                    ledger_label = 'Task Completed' if effective_cmd == 'x' else ('Task Cancelled' if effective_cmd == '-' else 'Task Deferred')
-                    resolved_item = focus_item.clone_with_state(marker, marker) if isinstance(focus_item, Task) else focus_item
-                    if not focus_path:
-                        item_to_record = self.triage_stack.pop(0)
-                        resolved_top = item_to_record.clone_with_state(marker, marker) if isinstance(item_to_record, Task) else item_to_record
-                        self.commit_to_ledger(ledger_label, [resolved_top])
-                    else:
-                        self._update_recursive_item(top_item, focus_path, resolved_item)
-                        hierarchical_context = self._get_path_pruned_item(top_item, focus_path, resolved_item)
-                        if isinstance(hierarchical_context, Task) and focus_path != []: hierarchical_context.state = ' '
-                        self.commit_to_ledger(ledger_label, [hierarchical_context])
-                    if self.mini_timer_active:
-                        self.mini_timer_remaining = self.mini_timer_duration * 60
-                        self.mini_timer_last_tick = time.time(); self.mini_timer_last_chime_timestamp = 0
-                    self.task_start_time = None; self.initial_stack = copy.deepcopy(self.triage_stack)
-                    if not self.triage_stack and self.mode == "FOCUS":
-                        self.commit_to_ledger("Focus Session Complete", []); self.mode = "EXIT"; return "REDRAW"
-                    if self.mode == "BREAK" and is_break_obj:
-                        # resolved_item was the break_item
-                        self._transition_from_break_to_focus(break_item=resolved_item)
-                        return "REDRAW"
+            command = CommandParser.parse(self, cmd_string, self.mode)
+            if command:
+                if self.mode == "BREAK":
+                    is_break_obj = self.triage_stack and isinstance(self.triage_stack[0], Break)
+                    base_cmd = command.parts[0].lower() if command.parts else ""
+                    if not (base_cmd in ['f', 'b', 'n', 'N', 't', 'q'] or (is_break_obj and base_cmd in ['x', '-', 'i', '>', '>>', 'e'])):
+                        self.last_msg = "Command disabled during break."
+                        return
+
+                return command.execute(self)
+            elif self.mode != "EXIT":
+                 if not cmd_string.strip(): return
+                 self.last_msg = f"Unknown command: {cmd_string}"
         except Exception as e: self.last_msg = f"Error: {e}"
         return None
 
