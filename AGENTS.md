@@ -17,3 +17,11 @@ This program is a "lens" for a chronological journal.
 - **Focus (f):** Focused UI. Commands: `x` (complete), `n` (add task/note), `-` (cancel), `>` (defer), `b` (break), `w` (free write).
 - **Break (b):** Visual countdown. If a new meeting starts during a break, the UI turns red ("!!! MEETING STARTING !!!"), a chime sounds, and the meeting name is shown in the status bar. The user must manually resume Focus session with 'f'.
 - **Exit Logic:** Exiting from Focus/Triage (via `q`) must trigger a "Rescue Append" of pending items under an `------- Interrupted -------` marker. (Note: `SIGINT/Ctrl+C` support is currently pending).
+
+## Object-Oriented Architecture
+### Commands
+User input is processed via `CommandParser` into `Command` subclasses. Logic for each action resides in the `execute(cli)` method of the respective command.
+### Timers
+Timing is managed by `TimerManager` holding specialized `Stopwatch`, `ThresholdTimer`, and `CountdownTimer` objects. Chime logic is encapsulated within these classes via the `should_chime()` method.
+### Items
+The ledger is parsed into a tree of `Item` subclasses: `Task`, `Meeting`, `Break`, `Note`, and `Header`. Hierarchy is determined by indentation and managed via `Item.children`.
