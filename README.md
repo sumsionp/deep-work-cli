@@ -140,6 +140,13 @@ The ledger uses the following markers (Timestamp format: `MM/DD/YYYY HH:MM:SS AM
 - `------- Deferred from last session <Timestamp> -------`
 - `------- Edited <Timestamp> -------`
 
+## Architecture
+
+FocusCLI follows a robust Object-Oriented design:
+- **Command Pattern:** User input is parsed by `CommandParser` into polymorphic `Command` subclasses (e.g., `AddCommand`, `ResolutionCommand`, `FocusCommand`). This decouples input parsing from business logic.
+- **Timer Strategy:** Timing logic is encapsulated in specialized classes (`Stopwatch`, `ThresholdTimer`, `CountdownTimer`) managed by a central `TimerManager`.
+- **Hierarchical Tree:** The ledger is represented as a tree of `Item` objects (`Task`, `Meeting`, `Break`, `Note`, `Header`).
+
 ## Development
 
 ### Running Tests
