@@ -5,7 +5,7 @@ import sys
 # Ensure the root directory is in sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from focuscli import CommandParser, QuitCommand, AddCommand, ResolutionCommand, SubtaskDoneCommand
+from focuscli import CommandParser, QuitCommand, AddCommand, ResolveCommand
 
 class TestCommandParser(unittest.TestCase):
     def setUp(self):
@@ -20,14 +20,12 @@ class TestCommandParser(unittest.TestCase):
         self.assertIsInstance(cmd, AddCommand)
         self.assertEqual(cmd.parts, ["n", "task"])
 
-    def test_shorthand_parsing(self):
-        cmd = CommandParser.parse(self.cli, "x1", "FOCUS")
-        self.assertIsInstance(cmd, SubtaskDoneCommand)
-        self.assertEqual(cmd.original_cmd, "x1")
-
     def test_resolution_parsing(self):
         cmd = CommandParser.parse(self.cli, "x", "FOCUS")
-        self.assertIsInstance(cmd, ResolutionCommand)
+        self.assertIsInstance(cmd, ResolveCommand)
+
+        cmd1 = CommandParser.parse(self.cli, "x1", "TRIAGE")
+        self.assertIsInstance(cmd, ResolveCommand)
 
     def test_mode_aware_parsing(self):
         # In EXIT mode, only q and w are allowed

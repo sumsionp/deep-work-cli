@@ -633,7 +633,7 @@ class FocusCommand(Command):
             cli.initial_stack = copy.deepcopy(cli.triage_stack)
 
 
-class ResolutionCommand(Command):
+class ResolveCommand(Command):
     def execute(self, cli):
         base_cmd = self.parts[0].lower()
         if not cli.triage_stack:
@@ -686,24 +686,6 @@ class ResolutionCommand(Command):
             if cli.mode == "BREAK" and is_break_obj:
                 cli._transition_from_break_to_focus(break_item=resolved_item)
                 return "REDRAW"
-
-
-class SubtaskDoneCommand(Command):
-    def execute(self, cli):
-        if cli.mode not in ["FOCUS", "BREAK"] or not cli.triage_stack:
-            return
-        match_x = re.match(r'^x(\d+)', self.original_cmd)
-        if match_x:
-            idx = int(match_x.group(1))
-            top_item = cli.triage_stack[0]
-            focus_item, _, focus_path = cli._get_recursive_focus(top_item)
-            if isinstance(focus_item, Task) and 0 <= idx < len(focus_item.children):
-                child = focus_item.children[idx]
-                if isinstance(child, Task):
-                    child.state = 'x'
-                    cli._update_recursive_item(top_item, focus_path, focus_item)
-                    if cli.timers.mini_timer.is_active:
-                        cli.timers.mini_timer.reset(cli.mini_timer_duration * 60)
 
 
 class EditCommand(Command):
@@ -833,8 +815,7 @@ class CommandParser:
         if base_cmd == 'f': return FocusCommand(parts)
         if base_cmd == 'e': return EditCommand(parts)
         if base_cmd == 'b': return BreakCommand(parts)
-        if re.match(r'^x\d+', cmd_string): return SubtaskDoneCommand(parts, original_cmd=cmd_string)
-        if base_cmd in ['x', '-', '>', '>>']: return ResolutionCommand(parts)
+        if base_cmd in ['x', '-', '>', '>>']: return ResolveCommand(parts)
         if base_cmd == 'i': return IgnoreCommand(parts)
         if base_cmd == 'm': return MiniTimerCommand(parts)
         if base_cmd == 'p': return ReorderCommand(parts)
