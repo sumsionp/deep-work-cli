@@ -137,7 +137,9 @@ class Item:
 
 class Note(Item):
     """A plain text entry with no state or children."""
-    pass
+    @classmethod
+    def from_line(cls, line, indent=0):
+        return cls(line, indent)
 
 class Task(Item):
     """An entry with a [ ] marker and potential sub-items."""
@@ -149,13 +151,19 @@ class Task(Item):
         self.children = []  # List of Item objects (Notes or Tasks)
 
     @classmethod
-    def from_line(cls, line, indent=0):
-        clean = line.strip()
-        match = cls.REGEX.match(clean)
+    def _parse_common(cls, line):
+        match = cls.REGEX.match(line)
         if match:
             state_char = match.group(1)
             state = state_char if state_char and not state_char.isspace() else ' '
             content = match.group(2)
+            return state, content
+        return None, None
+
+    @classmethod
+    def from_line(cls, line, indent=0):
+        state, content = cls._parse_common(line)
+        if content is not None:
             return cls(content, indent, state)
         return None
 
@@ -221,16 +229,11 @@ class Meeting(Task):
 
     @classmethod
     def from_line(cls, line, indent=0):
-        clean = line.strip()
-        match = cls.REGEX.match(clean)
-        if match:
-            state_char = match.group(1)
-            state = state_char if state_char and not state_char.isspace() else ' '
-            content = match.group(2)
-
+        state, content = cls._parse_common(line)
+        if content:
             m_time = cls.parse_meeting_time(content)
             if m_time:
-                start, end, duration = m_time if m_time else (None, None, None)
+                start, end, duration = m_time
                 return cls(content, indent, state, start, end, duration)
         return None
 
@@ -304,12 +307,8 @@ class Break(Meeting):
 
     @classmethod
     def from_line(cls, line, indent=0):
-        clean = line.strip()
-        match = cls.REGEX.match(clean)
-        if match:
-            state = match.group(1)
-            content = match.group(2)
-
+        state, content = cls._parse_common(line)
+        if content:
             m_time = cls.parse_meeting_time(content)
             start, end, duration = m_time if m_time else (None, None, None)
             return cls(content, indent, state, start, end, duration)
@@ -378,13 +377,12 @@ class Header(Item):
 
     @classmethod
     def from_line(cls, line, indent=0):
-        clean = line.strip()
-        match = cls.REGEX.match(clean)
+        match = cls.REGEX.match(line)
         if match:
             return cls(match.group(1).strip(), match.group(2).strip(), indent)
 
-        if clean.startswith('-------') and clean.endswith('-------'):
-            label = clean.strip('-').strip()
+        if line.startswith('-------') and line.endswith('-------'):
+            label = line.strip('-').strip()
             return cls(label, "", indent)
         return None
 
