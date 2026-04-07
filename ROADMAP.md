@@ -2,12 +2,12 @@
 
 ## UI & Interaction
 - **Split-screen Task Editor** Explore the possibility of splitting the screen and only opening vi in the bottom part of the screen when adding or editing tasks and notes.
-- **Add Already Completed Task** Automatically complete top level notes that were entered prepended with '[x]'.
 - **Search** Implement '/' command to search for matching tasks in the triage stack. This is primarily for verifying whether the user has already entered a matching new task to avoid duplicates.
 - **Selector-based Navigation:** Implement `j/k` for navigation and `CTRL+hjkl` for reordering/indenting in Triage mode, replacing or supplementing the current numbered command system.
 - **Deadline Timer:** Countdown in the Focus Mode header for tasks with specific time-of-day deadlines.
 
 ## Completed Items
+- **Add Already Completed Task** Automatically complete top level notes that were entered prepended with '[x]'. These are added to the ledger, but not to the triage stack.
 - **Action-Specific Markers:** Transitioned from generic markers (like `------- Work -------`) to more specific ones like `------- Completed -------` or `------- Deferred -------` to improve ledger auditability.
 - **Session Markers:** Implemented markers for `Free Write Session` to better segment purely editorial time.
 - **Rename Work Mode to Focus Mode:** (Completed) Updated terminology throughout the app and documentation to use "Focus" instead of "Work".

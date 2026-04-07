@@ -13,6 +13,7 @@ This program acts as a "lens" for a chronological journal stored in a plain text
 - **Notes:** Any line that isn't a task.
 - **Hierarchy:** Two leading spaces indicate a child relationship (subtask or note) to the task above.
 - **Multi-line Grouping:** When adding tasks via `n` or `N`, the parser uses indentation to group items. Any line indented more than the preceding line is automatically treated as a sub-item (note or subtask) of that parent, ensuring that a new task and its subtasks are added to the stack as a single unit.
+- **Adding Already Completed Tasks** Already completed tasks can be added for a record in the ledger. These are entered prepended with `[x]` or any other completed marker. These are added to the ledger, but not to the triage stack.
 
 ### Meeting Support
 Tasks can be time-aware by including a time block. Meetings automatically preempt the current task when their start time arrives.
@@ -79,7 +80,7 @@ Entered by typing `f` from Triage Mode. It displays the top task along with its 
 - `[Space]`: **Reset Mini Timer.** When in Mini Task Session mode, resets the timer to its full duration (only works when command buffer is empty).
 - `N`: **Prioritize.** Opens `vi` to add tasks/notes. Supports one-line addition: `N "[] Task"`. Indented items are added relative to current focus. New top-level tasks are inserted at index 0 (becoming the new focus).
 - `N#`: **Prioritize at index.** Same as `N` but inserts new top-level tasks starting at index `#`. Leading sub-items target the task at index `#`.
-- `n`: **Add.** Opens `vi` to add tasks/notes. Supports one-line addition: `n "[] Task"`. Indented items are added relative to current focus. New top-level tasks are appended to the end.
+- `n`: **Add.** Opens `vi` to add tasks/notes. Supports one-line addition: `n "[] Task"`. Indented items are added relative to current focus. New top-level tasks are appended to the end. Items added with a completed marker are written to the ledger, but not added to the Triage Stack.
 - `n#`: **Add at index.** Identical to `N#`.
 - `b <mins>`: **Break.** Enters Break Mode for specified minutes (default 5).
 - `i`: **Ignore.** Skips the current item (marks as cancelled if it's a task).

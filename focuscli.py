@@ -1384,7 +1384,7 @@ class FocusCLI:
                     self._transition_from_break_to_focus(break_item=old_break)
 
             self.commit_to_ledger(mode_label, top_level_items)
-            top_level_tasks = [it for it in top_level_items if isinstance(it, Task)]
+            top_level_tasks = [it for it in top_level_items if isinstance(it, Task) and it.is_pending]
 
             if target_index is not None:
                 insert_idx = target_index

@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import MagicMock
 import sys
 import os
 import copy
@@ -6,13 +7,13 @@ import copy
 # Ensure the root directory is in sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from focuscli import FocusCLI
+from focuscli import FocusCLI, Task
 
 class TestOneLineAdd(unittest.TestCase):
     def setUp(self):
         self.cli = FocusCLI()
         # Mock ledger to avoid file IO
-        self.cli.commit_to_ledger = lambda label, items: None
+        self.cli.commit_to_ledger = MagicMock()
         # Mock vi input to avoid terminal hangs
         self.cli._get_multi_line_input = lambda context_lines=None: []
 
@@ -46,6 +47,15 @@ class TestOneLineAdd(unittest.TestCase):
 
         self.assertEqual(len(self.cli.triage_stack), 1)
         self.assertTrue(any(c.content == "Subtask 1" for c in self.cli.triage_stack[0].children))
+
+    def test_n_one_line_top_level_completed(self):
+        task_string = "[x] Completed Task"
+        task = Task.from_line(task_string)
+
+        self.cli.mode = "FOCUS"
+        self.cli.handle_command(f"n {task_string}")
+        self.assertEqual(self.cli.triage_stack, [])
+        self.cli.commit_to_ledger.assert_called_with("New Entry(s)", [task])
 
     def test_N_one_line_subtask_focus_mode(self):
         self.cli.mode = "FOCUS"
