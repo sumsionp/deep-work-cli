@@ -6,7 +6,7 @@ import sys
 # Ensure the root directory is in sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from focuscli import FocusCLI
+from focuscli import FocusCLI, ItemFactory
 
 class TestHierarchicalAdd(unittest.TestCase):
     def setUp(self):
@@ -17,7 +17,7 @@ class TestHierarchicalAdd(unittest.TestCase):
     def test_new_task_with_subtasks(self):
         """Scenario 1: Grouping subtasks with a new parent task."""
         self.cli.mode = "FOCUS"
-        self.cli.triage_stack = [self.cli._parse_single_line('[] Active Task')]
+        self.cli.triage_stack = [ItemFactory.from_line('[] Active Task')]
 
         lines = [
             "[] New Parent",
@@ -37,8 +37,8 @@ class TestHierarchicalAdd(unittest.TestCase):
     def test_focus_preservation_with_N(self):
         """Scenario 5: Mixed batch with 'N' should preserve focus on current task."""
         initial_stack = [
-            self.cli._parse_single_line('[] Task 1'),
-            self.cli._parse_single_line('[] Task 2')
+            ItemFactory.from_line('[] Task 1'),
+            ItemFactory.from_line('[] Task 2')
         ]
         self.cli.mode = "FOCUS"
         self.cli.triage_stack = copy.deepcopy(initial_stack)
@@ -60,8 +60,8 @@ class TestHierarchicalAdd(unittest.TestCase):
     def test_triage_leading_subtasks(self):
         """Scenario 8/9: Leading subtasks in Triage Mode target index 0."""
         initial_stack = [
-            self.cli._parse_single_line('[] Task 1'),
-            self.cli._parse_single_line('[] Task 2')
+            ItemFactory.from_line('[] Task 1'),
+            ItemFactory.from_line('[] Task 2')
         ]
         self.cli.mode = "TRIAGE"
         self.cli.triage_stack = copy.deepcopy(initial_stack)
@@ -82,8 +82,8 @@ class TestHierarchicalAdd(unittest.TestCase):
     def test_prepend_notes_order_preservation(self):
         """Ensure prepended hierarchical items maintain original order."""
         self.cli.mode = "FOCUS"
-        task = self.cli._parse_single_line('[] Active Task')
-        sub = self.cli._parse_single_line('[] Existing Sub')
+        task = ItemFactory.from_line('[] Active Task')
+        sub = ItemFactory.from_line('[] Existing Sub')
         sub.indent = 2
         sub.parent = task
         task.children.append(sub)

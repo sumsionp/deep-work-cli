@@ -6,7 +6,7 @@ from datetime import datetime
 # Ensure the root directory is in sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from focuscli import Item, Task, Meeting, Break, Note, Header, parse_single_line
+from focuscli import Item, Task, Meeting, Break, Note, Header, ItemFactory
 
 class TestArchitecture(unittest.TestCase):
 
@@ -82,6 +82,25 @@ class TestArchitecture(unittest.TestCase):
 
         expected = "[] Root\n  [] Subtask\n    Note"
         self.assertEqual(root.to_ledger(), expected)
+
+    def test_item_factory(self):
+        """Creates specific types of Item objects"""
+        note_line = "This is a note"
+        task_line = "[] Pending task"
+        meeting_line = "[] Meeting 10 AM 15m"
+        break_line = "[B] Break Time 4-5 PM"
+
+        note_object = ItemFactory.from_line(note_line)
+        self.assertIsInstance(note_object, Note)
+
+        task_object = ItemFactory.from_line(task_line)
+        self.assertIsInstance(task_object, Task)
+
+        meeting_object = ItemFactory.from_line(meeting_line)
+        self.assertIsInstance(meeting_object, Meeting)
+
+        break_object = ItemFactory.from_line(break_line)
+        self.assertIsInstance(break_object, Break)
 
     def test_meeting_detection(self):
         """Meeting.from_line should identify time patterns but ignore regular tasks."""

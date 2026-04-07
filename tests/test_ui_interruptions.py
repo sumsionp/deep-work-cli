@@ -11,7 +11,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 # Mock FILENAME before importing FocusCLI
 os.environ['FOCUS_FILENAME'] = 'test-plan.txt'
 
-from focuscli import FocusCLI
+from focuscli import FocusCLI, ItemFactory
 
 class TestMeetingInterruption(unittest.TestCase):
     def setUp(self):
@@ -29,7 +29,7 @@ class TestMeetingInterruption(unittest.TestCase):
         meeting_end = meeting_start + timedelta(minutes=5)
 
         meeting_text = f"[] Meeting at {meeting_start.strftime('%I:%M %p')} 5m"
-        meeting_item = self.cli._parse_single_line(meeting_text)
+        meeting_item = ItemFactory.from_line(meeting_text)
 
         # 2. Start a break
         break_item = Break.from_attributes("Quick Break", start_time=now, duration=5)
@@ -62,7 +62,7 @@ class TestMeetingInterruption(unittest.TestCase):
         meeting_end = now + timedelta(minutes=5)
 
         meeting_text = f"[] Meeting at {meeting_start.strftime('%I:%M %p')} 10m"
-        meeting_item = self.cli._parse_single_line(meeting_text)
+        meeting_item = ItemFactory.from_line(meeting_text)
 
         # Mark as already chimed
         meeting_id = f"[] {meeting_item.content}_{meeting_item.start_time}"

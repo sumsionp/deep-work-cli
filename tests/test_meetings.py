@@ -8,7 +8,7 @@ import os
 # Ensure the root directory is in sys.path so we can import focuscli
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from focuscli import FocusCLI, Meeting, Break
+from focuscli import FocusCLI, Meeting, Break, ItemFactory
 
 class TestMeetingInterruption(unittest.TestCase):
     def setUp(self):
@@ -28,7 +28,7 @@ class TestMeetingInterruption(unittest.TestCase):
         meeting_start = now + timedelta(minutes=1)
 
         meeting_text = f"[] Meeting at {meeting_start.strftime('%I:%M %p')} 5m"
-        meeting_item = self.cli._parse_single_line(meeting_text)
+        meeting_item = ItemFactory.from_line(meeting_text)
 
         # 2. Start a break
         # Important: The meeting item MUST be before the break item for it to be detected as "interrupting"
@@ -63,7 +63,7 @@ class TestMeetingInterruption(unittest.TestCase):
         meeting_start = now - timedelta(minutes=2)
 
         meeting_text = f"[] Meeting at {meeting_start.strftime('%I:%M %p')} 10m"
-        meeting_item = self.cli._parse_single_line(meeting_text)
+        meeting_item = ItemFactory.from_line(meeting_text)
 
         # Mark as already chimed
         meeting_id = f"[] {meeting_item.content}_{meeting_item.start_time}"

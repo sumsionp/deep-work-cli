@@ -91,29 +91,6 @@ def strip_meeting_time(text):
     result = re.sub(r'\s+', ' ', result).strip()
     return result
 
-def parse_single_line(line):
-    indent_match = re.match(r'^(\s*)', line)
-    indent = len(indent_match.group(1)) if indent_match else 0
-    clean = line.strip()
-
-    header = Header.from_line(clean, indent)
-    if header:
-        return header
-
-    break_item = Break.from_line(clean, indent)
-    if break_item:
-        return break_item
-
-    meeting = Meeting.from_line(clean, indent)
-    if meeting:
-        return meeting
-
-    task = Task.from_line(clean, indent)
-    if task:
-        return task
-
-    return Note(clean, indent)
-
 class Item:
     """Base class for anything in the ledger."""
     def __init__(self, content, indent=0):
@@ -131,7 +108,7 @@ class Item:
             line_raw = line.rstrip()
             if not line_raw.strip(): continue
 
-            item = parse_single_line(line_raw)
+            item = ItemFactory.from_line(line_raw)
 
             # Adjust current_path
             while stack and stack[-1].indent >= item.indent:
@@ -362,6 +339,33 @@ class Break(Meeting):
     @classmethod
     def from_attributes(cls, content, start_time=None, end_time=None, duration=None):
         return super().from_attributes(content, 0, 'B', start_time, end_time, duration)
+
+class ItemFactory():
+    """Determines what type of Item object is returned based on a line"""
+
+    @classmethod
+    def from_line(cls, line):
+        indent_match = re.match(r'^(\s*)', line)
+        indent = len(indent_match.group(1)) if indent_match else 0
+        clean = line.strip()
+
+        header = Header.from_line(clean, indent)
+        if header:
+            return header
+
+        break_item = Break.from_line(clean, indent)
+        if break_item:
+            return break_item
+
+        meeting = Meeting.from_line(clean, indent)
+        if meeting:
+            return meeting
+
+        task = Task.from_line(clean, indent)
+        if task:
+            return task
+
+        return Note(clean, indent)
 
 class Header(Item):
     """A ledger marker line like ------- LABEL TIMESTAMP -------"""
@@ -871,9 +875,6 @@ class FocusCLI:
         self.last_recorded_focus = None
         self.break_meeting_interrupted = False
 
-    def _parse_single_line(self, line):
-        return parse_single_line(line)
-
     def get_daily_summary(self):
         """Returns a dictionary of counts for top-level tasks and subtasks."""
         counts = {
@@ -894,7 +895,7 @@ class FocusCLI:
 
             if "-------" in line_raw: continue
 
-            item = parse_single_line(line_raw)
+            item = ItemFactory.from_line(line_raw)
 
             while stack and stack[-1][1] >= item.indent:
                 stack.pop()
@@ -1055,7 +1056,7 @@ class FocusCLI:
 
             if "-------" in line_raw: continue
 
-            item = self._parse_single_line(line_raw)
+            item = ItemFactory.from_line(line_raw)
 
             # Adjust current_path
             while current_path and current_path[-1].indent >= item.indent:

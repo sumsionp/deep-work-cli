@@ -7,7 +7,7 @@ import copy
 # Ensure the root directory is in sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from focuscli import FocusCLI, Task
+from focuscli import FocusCLI, Task, ItemFactory
 
 class TestOneLineAdd(unittest.TestCase):
     def setUp(self):
@@ -19,7 +19,7 @@ class TestOneLineAdd(unittest.TestCase):
 
     def test_n_one_line_top_level(self):
         self.cli.mode = "TRIAGE"
-        self.cli.triage_stack = [self.cli._parse_single_line('[] Task 1')]
+        self.cli.triage_stack = [ItemFactory.from_line('[] Task 1')]
 
         self.cli.handle_command('n "[] Task 2"')
 
@@ -29,7 +29,7 @@ class TestOneLineAdd(unittest.TestCase):
 
     def test_N_one_line_top_level(self):
         self.cli.mode = "TRIAGE"
-        self.cli.triage_stack = [self.cli._parse_single_line('[] Task 1')]
+        self.cli.triage_stack = [ItemFactory.from_line('[] Task 1')]
 
         self.cli.handle_command('N "[] Task 2"')
 
@@ -40,7 +40,7 @@ class TestOneLineAdd(unittest.TestCase):
 
     def test_n_one_line_subtask(self):
         self.cli.mode = "TRIAGE"
-        self.cli.triage_stack = [self.cli._parse_single_line('[] Task 1')]
+        self.cli.triage_stack = [ItemFactory.from_line('[] Task 1')]
 
         # Adding a subtask in triage mode should target the first task
         self.cli.handle_command('n "  [] Subtask 1"')
@@ -60,10 +60,10 @@ class TestOneLineAdd(unittest.TestCase):
     def test_N_one_line_subtask_focus_mode(self):
         self.cli.mode = "FOCUS"
         # Hierarchy: Task 1 -> Sub 1 -> Sub 2 (focused)
-        task = self.cli._parse_single_line('[] Task 1')
-        sub1 = self.cli._parse_single_line('[] Sub 1')
+        task = ItemFactory.from_line('[] Task 1')
+        sub1 = ItemFactory.from_line('[] Sub 1')
         sub1.indent = 2; sub1.parent = task
-        sub2 = self.cli._parse_single_line('[] Sub 2')
+        sub2 = ItemFactory.from_line('[] Sub 2')
         sub2.indent = 4; sub2.parent = sub1
         sub1.children.append(sub2)
         task.children.append(sub1)
@@ -89,7 +89,7 @@ class TestOneLineAdd(unittest.TestCase):
 
     def test_n_one_line_with_extra_spaces(self):
         self.cli.mode = "TRIAGE"
-        self.cli.triage_stack = [self.cli._parse_single_line('[] Task 1')]
+        self.cli.triage_stack = [ItemFactory.from_line('[] Task 1')]
 
         # Verify it handles more than 2 spaces (deeper nesting or just extra space)
         self.cli.handle_command('n "    [] Sub Sub 1"')
