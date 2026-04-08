@@ -83,5 +83,47 @@ class TestMeetingInterruption(unittest.TestCase):
         self.assertEqual(self.cli.mode, "BREAK")
         self.assertFalse(self.cli.break_meeting_interrupted)
 
+    def test_meeting_only_interrupts_current_task_visually(self):
+        from focuscli import Task
+        # 1. Setup a meeting
+        now = datetime.now()
+        meeting_start = now + timedelta(minutes=1)
+        meeting_end = meeting_start + timedelta(minutes=5)
+
+        meeting_text = f"[] Meeting at {meeting_start.strftime('%I:%M %p')} 5m"
+        meeting_item = ItemFactory.from_line(meeting_text)
+
+        # 2. Start a meeting
+        task_item = Task.from_line("[] Do Task")
+        self.cli.triage_stack = [task_item, meeting_item]
+        self.cli.mode = "FOCUS"
+
+        # Calling check_meetings before the meeting starts should not chime
+        self.cli.check_meetings()
+        self.cli.play_chime.assert_not_called()
+
+        # 3. Fast forward time to when meeting starts
+        future_now = meeting_start + timedelta(seconds=1)
+
+        with patch('focuscli.datetime') as mock_datetime:
+            mock_datetime.now.return_value = future_now
+            # 4. Call check_meetings
+            self.cli.check_meetings()
+
+        # 5. Verify results
+        self.assertEqual(self.cli.mode, "FOCUS")
+        self.assertEqual(self.cli.last_msg, "Meeting Starting: " + meeting_item.content)
+        self.assertEqual(self.cli.triage_stack[0], task_item)
+
+        # 6. Fast forward time to when it should chime again
+        should_have_chimed_time = future_now + timedelta(seconds=15)
+
+        with patch('focuscli.datetime') as mock_datetime:
+            mock_datetime.now.return_value = should_have_chimed_time
+            self.cli.check_meetings()
+
+        # 7. Verify that the chime was played exactly 2 times
+        self.cli.play_chime.call_count == 2
+
 if __name__ == '__main__':
     unittest.main()

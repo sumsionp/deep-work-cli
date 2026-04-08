@@ -1641,9 +1641,9 @@ class FocusCLI:
                         is_current_active_meeting = isinstance(current_item, (Meeting, Break)) and current_item.is_active()
 
                         if not is_current_active_meeting:
-                            self.triage_stack.insert(0, self.triage_stack.pop(i))
-                            self.timers.task_timer.stop()
-                            self.last_msg = f"Meeting Started: {self.triage_stack[0].content}"
+                            self.last_msg = f"Meeting Starting: {item.content}"
+                            if self.timers.should_chime(interval_seconds=15):
+                                self.play_chime()
                             found_active_meeting = True
 
                     if i == 0:
