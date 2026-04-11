@@ -1632,6 +1632,9 @@ class FocusCLI:
                     if self.mode == "BREAK" and not isinstance(item, Break):
                         self.break_meeting_interrupted = True
                     self.play_chime()
+                    # Reset the reminder interval so the FOCUS reminder
+                    # branch below does not double-chime in this same call.
+                    self.timers.last_chime_timestamp = time.time()
                     self.chimed_meetings.add(meeting_id)
                     self.last_msg = f"Meeting Starting: {item.content}"
 

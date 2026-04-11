@@ -98,11 +98,6 @@ class TestMeetingInterruption(unittest.TestCase):
         self.cli.triage_stack = [task_item, meeting_item]
         self.cli.mode = "FOCUS"
 
-        # Mock the reminder-interval check so we control exactly when the
-        # second chime fires. (should_chime uses time.time(), so patching
-        # focuscli.datetime does NOT control it.)
-        self.cli.timers.should_chime = MagicMock(return_value=False)
-
         # Calling check_meetings before the meeting starts should not chime
         self.cli.check_meetings()
         self.cli.play_chime.assert_not_called()
@@ -112,26 +107,30 @@ class TestMeetingInterruption(unittest.TestCase):
 
         with patch('focuscli.datetime') as mock_datetime:
             mock_datetime.now.return_value = future_now
-            # 4. Call check_meetings — should fire the initial chime
+            # 4. Call check_meetings — should fire exactly one chime.
+            # Without the last_chime_timestamp reset in check_meetings, the
+            # reminder branch would also fire in this same call, producing 2.
             self.cli.check_meetings()
 
         # 5. Verify results: task stays on top, mode stays FOCUS,
-        # initial chime fired exactly once
+        # initial chime fired exactly once (no double-chime)
         self.assertEqual(self.cli.mode, "FOCUS")
         self.assertEqual(self.cli.last_msg, "Meeting Starting: " + meeting_item.content)
         self.assertEqual(self.cli.triage_stack[0], task_item)
         self.assertEqual(self.cli.play_chime.call_count, 1)
 
-        # 6. Without the reminder interval elapsing, another call should NOT chime
+        # 6. An immediate follow-up call should not re-chime — the 15s
+        # reminder interval has not elapsed
         with patch('focuscli.datetime') as mock_datetime:
             mock_datetime.now.return_value = future_now + timedelta(seconds=5)
             self.cli.check_meetings()
         self.assertEqual(self.cli.play_chime.call_count, 1)
 
-        # 7. When the reminder interval elapses, the next call SHOULD chime again
-        self.cli.timers.should_chime.return_value = True
+        # 7. Simulate the reminder interval elapsing by rewinding the
+        # timer's last_chime_timestamp, then call again — should chime
+        self.cli.timers.last_chime_timestamp = 0
         with patch('focuscli.datetime') as mock_datetime:
-            mock_datetime.now.return_value = future_now + timedelta(seconds=15)
+            mock_datetime.now.return_value = future_now + timedelta(seconds=20)
             self.cli.check_meetings()
         self.assertEqual(self.cli.play_chime.call_count, 2)
 
