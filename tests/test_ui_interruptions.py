@@ -93,10 +93,15 @@ class TestMeetingInterruption(unittest.TestCase):
         meeting_text = f"[] Meeting at {meeting_start.strftime('%I:%M %p')} 5m"
         meeting_item = ItemFactory.from_line(meeting_text)
 
-        # 2. Start a meeting
+        # 2. Start with a task on top of the meeting
         task_item = Task.from_line("[] Do Task")
         self.cli.triage_stack = [task_item, meeting_item]
         self.cli.mode = "FOCUS"
+
+        # Mock the reminder-interval check so we control exactly when the
+        # second chime fires. (should_chime uses time.time(), so patching
+        # focuscli.datetime does NOT control it.)
+        self.cli.timers.should_chime = MagicMock(return_value=False)
 
         # Calling check_meetings before the meeting starts should not chime
         self.cli.check_meetings()
@@ -107,23 +112,28 @@ class TestMeetingInterruption(unittest.TestCase):
 
         with patch('focuscli.datetime') as mock_datetime:
             mock_datetime.now.return_value = future_now
-            # 4. Call check_meetings
+            # 4. Call check_meetings — should fire the initial chime
             self.cli.check_meetings()
 
-        # 5. Verify results
+        # 5. Verify results: task stays on top, mode stays FOCUS,
+        # initial chime fired exactly once
         self.assertEqual(self.cli.mode, "FOCUS")
         self.assertEqual(self.cli.last_msg, "Meeting Starting: " + meeting_item.content)
         self.assertEqual(self.cli.triage_stack[0], task_item)
+        self.assertEqual(self.cli.play_chime.call_count, 1)
 
-        # 6. Fast forward time to when it should chime again
-        should_have_chimed_time = future_now + timedelta(seconds=15)
-
+        # 6. Without the reminder interval elapsing, another call should NOT chime
         with patch('focuscli.datetime') as mock_datetime:
-            mock_datetime.now.return_value = should_have_chimed_time
+            mock_datetime.now.return_value = future_now + timedelta(seconds=5)
             self.cli.check_meetings()
+        self.assertEqual(self.cli.play_chime.call_count, 1)
 
-        # 7. Verify that the chime was played exactly 2 times
-        self.cli.play_chime.call_count == 2
+        # 7. When the reminder interval elapses, the next call SHOULD chime again
+        self.cli.timers.should_chime.return_value = True
+        with patch('focuscli.datetime') as mock_datetime:
+            mock_datetime.now.return_value = future_now + timedelta(seconds=15)
+            self.cli.check_meetings()
+        self.assertEqual(self.cli.play_chime.call_count, 2)
 
 if __name__ == '__main__':
     unittest.main()
