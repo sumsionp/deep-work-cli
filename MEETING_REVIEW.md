@@ -42,10 +42,17 @@ The current `FocusCLI` class is over-encapsulated, managing both the UI and the 
     2. `meeting_timeline`: A sorted list of `Meeting` objects.
 - **Impact**: `check_meetings` would simply check `meeting_timeline[0].start_time`. If due, it moves the meeting to `work_queue[1]`.
 
-### The `Chimer` Object
-- **Problem**: The current 15s chime is managed by a global `last_chime_timestamp`. If multiple things need to chime at different intervals, they interfere.
-- **Solution**: A `Chimer` class (subclass of `CountdownTimer`) that can be "armed" with a meeting name.
-- **Impact**: It would manage its own 15s internal ticker and sound logic, decoupling alerts from the stack iteration.
+### The `Chimer` Object: Centralized vs. Per-Meeting
+A key architectural question is whether the alert timer should live inside every `Meeting` object or in a centralized "Chimer" slot.
+
+- **Per-Meeting Timers**:
+    - Each `Meeting` would have its own `CountdownTimer`.
+    - *Benefit*: Encapsulation of alert state.
+    - *Drawback*: Requires complex coordination to ensure only the "next" meeting is actively ticking/chiming to avoid auditory chaos.
+- **Centralized Chimer (Recommended)**:
+    - A single `Chimer` object (subclass of `CountdownTimer`) resides in `TimerManager`.
+    - *Benefit*: Naturally enforces the "only one alert at a time" rule. The `TaskStack` simply "loads" the highest-priority starting meeting into this slot.
+    - *Impact*: Decouples the *existence* of a meeting from the *activity* of an alert.
 
 ### The `s` (Schedule) Command
 - **Current**: To "schedule" a task, you must edit its text to match a time regex.
