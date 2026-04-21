@@ -128,7 +128,7 @@ class TestMeetingInterruption(unittest.TestCase):
 
         # 7. Simulate the reminder interval elapsing by rewinding the
         # timer's last_chime_timestamp, then call again — should chime
-        self.cli.timers.last_chime_timestamp = 0
+        self.cli.timers.chimer.last_chime_timestamp = 0
         with patch('focuscli.datetime') as mock_datetime:
             mock_datetime.now.return_value = future_now + timedelta(seconds=20)
             self.cli.check_meetings()
