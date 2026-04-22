@@ -22,8 +22,10 @@ If the focused task is a Meeting or a Break, there are two options:
 - A new timestamp can be specified such as `> 2 PM`
   This changes the start time of the Meeting or Break to 2 PM and keeps the duration the same.
   The duration can also be changed by specifying either an end time or a duration such as `> 2-3 PM` or `> 2 PM 30m`
-- If the currently focused task is a Meeting or a Break and only `>` or `>#` is specified, the start time of the deferred item is changed to the end time of the currently focused Meeting or Break.
-  The duration stays the same and the old end time is thrown away.
+- If the currently focused task is a Meeting or a Break and only `>` or `>#` is specified, the item should be changed to a regular task and placed at the specified place in the focus_queue.
+  ie: `>` moves it to the end of the focus_queue and `>#` moves it to the specified index.
+  Any time block that is part of the Meeting or Break content is stripped out so that it will be parsed as a regular Task.
+  Since the content is changed, the old version of the Meeting or Break is written to the ledger with [e] status just as if it had been edited.
 
 ## Blocking Functionality
 
