@@ -476,17 +476,36 @@ class CountdownTimer(BaseTimer):
         return False
 
 
+
+class Chimer(CountdownTimer):
+    """Specialized timer for meeting alerts that repeat every 15s."""
+    def __init__(self):
+        super().__init__(duration_seconds=0)
+        self.meeting_name = ""
+
+    def load(self, meeting_name):
+        self.meeting_name = meeting_name
+        self.start(0)
+        self.last_chime_timestamp = time.time()
+
+    def should_chime(self, interval_seconds=15):
+        return super().should_chime(interval_seconds)
+
 class TimerManager:
     """Encapsulates all timer-related state and logic."""
     def __init__(self, focus_threshold_seconds):
         self.task_timer = Stopwatch()
         self.focus_timer = ThresholdTimer(focus_threshold_seconds)
         self.mini_timer = CountdownTimer()
+        self.chimer = Chimer()
         self.last_chime_timestamp = 0
 
     def update(self, mode):
         if mode == "FOCUS":
             self.mini_timer.tick()
+            self.chimer.tick()
+        elif mode == "BREAK":
+            self.chimer.tick()
 
     def should_chime(self, interval_seconds=60):
         now = time.time()
@@ -498,6 +517,80 @@ class TimerManager:
     def reset_chime(self):
         self.last_chime_timestamp = 0
 
+
+
+class TaskStack:
+    """Manages the separation of focus_queue and meeting_timeline."""
+    def __init__(self):
+        self.focus_queue = []
+        self.meeting_timeline = []
+
+    def populate(self, items):
+        """Sorts a list of items into the queue and timeline."""
+        self.focus_queue = []
+        self.meeting_timeline = []
+        now = datetime.now()
+        active_meetings = []
+        regular_items = []
+        for item in items:
+            if isinstance(item, Meeting):
+                if item.is_active(now=now):
+                    active_meetings.append(item)
+                elif item.start_time and item.start_time > now:
+                    self.meeting_timeline.append(item)
+                else:
+                    regular_items.append(item)
+            else:
+                regular_items.append(item)
+        self.focus_queue = active_meetings + regular_items
+        self.meeting_timeline.sort(key=lambda m: m.start_time)
+
+    def get_focus_queue(self): return self.focus_queue
+    def get_meeting_timeline(self): return self.meeting_timeline
+    def get_all(self): return self.focus_queue + self.meeting_timeline
+    def __len__(self): return len(self.get_all())
+    def __getitem__(self, i): return self.get_all()[i]
+    def __setitem__(self, i, val):
+        items = self.get_all()
+        items[i] = val
+        self.populate(items)
+    def __iter__(self): return iter(self.get_all())
+    def __bool__(self): return len(self) > 0
+    def pop(self, i=-1):
+        items = self.get_all()
+        item = items.pop(i)
+        self.populate(items)
+        return item
+    def insert(self, i, item):
+        items = self.get_all()
+        items.insert(i, item)
+        self.populate(items)
+    def append(self, item):
+        items = self.get_all()
+        items.append(item)
+        self.populate(items)
+    def extend(self, items_to_add):
+        items = self.get_all()
+        items.extend(items_to_add)
+        self.populate(items)
+    def __iadd__(self, other):
+        self.extend(other)
+        return self
+    def __add__(self, other):
+        return self.get_all() + list(other)
+    def __eq__(self, other):
+        if isinstance(other, list): return self.get_all() == other
+        return id(self) == id(other)
+
+    def check_for_due_meetings(self):
+        if not self.meeting_timeline: return None
+        now = datetime.now()
+        if self.meeting_timeline[0].is_active(now=now):
+            due_meeting = self.meeting_timeline.pop(0)
+            if len(self.focus_queue) > 1: self.focus_queue.insert(1, due_meeting)
+            else: self.focus_queue.append(due_meeting)
+            return due_meeting
+        return None
 
 class Command:
     """Base class for all CLI commands."""
@@ -859,10 +952,16 @@ class FocusCLI:
     def focus_threshold(self, value):
         self.timers.focus_timer.threshold = value
 
+    @property
+    def triage_stack(self): return self.stack
+    @triage_stack.setter
+    def triage_stack(self, value): self.stack.populate(value)
+
 
     def __init__(self):
         self.mode = "TRIAGE"
-        self.triage_stack = []
+        self.stack = TaskStack()
+
         self.initial_stack = []
         self.last_msg = "FocusCLI Ready."
         self.timers = TimerManager(ALERT_THRESHOLD)
@@ -938,41 +1037,20 @@ class FocusCLI:
         if not self.timers.focus_timer.is_active:
             self.timers.focus_timer.start()
 
+
     def sort_triage_stack(self):
-        """Move non-active meetings to the bottom, sorted by start time, while keeping active meetings at top."""
-        if not self.triage_stack:
-            return
+        """Move non-active meetings to the bottom."""
+        self.stack.populate(self.triage_stack.get_all())
 
-        now = datetime.now()
-        active_meetings = []
-        other_tasks = []
-        inactive_meetings = []
 
-        for item in self.triage_stack:
-            if isinstance(item, Meeting):
-                if item.is_active(now=now):
-                    active_meetings.append(item)
-                elif item.start_time:
-                    inactive_meetings.append((item.start_time, item))
-                else:
-                    other_tasks.append(item)
-            else:
-                other_tasks.append(item)
-
-        # Sort inactive meetings by start time
-        inactive_meetings.sort(key=lambda x: x[0])
-        sorted_inactive = [m[1] for m in inactive_meetings]
-
-        self.triage_stack = active_meetings + other_tasks + sorted_inactive
 
     def load_context(self):
-        """Whole-file aware parser with resolution logic. Resolutions are [x], [-], [>], and [e]."""
         if not os.path.exists(FILENAME):
             with open(FILENAME, 'w') as f: f.write(f"Session Start - {get_timestamp()}\n")
-            self.triage_stack = []
+            self.triage_stack.populate([])
             return
+        self.triage_stack.populate(self._parse_file(FILENAME))
 
-        self.triage_stack = self._parse_file(FILENAME)
 
     def rescue_previous_tasks(self):
         """Scans the last 7 days for pending tasks and defers them to today."""
@@ -1605,12 +1683,11 @@ class FocusCLI:
                     if not is_meeting:
                         self.play_chime()
 
+
     def check_meetings(self):
         if self.mode not in ["FOCUS", "BREAK"]: return
         if not self.triage_stack: return
-
         now = datetime.now()
-        # Auto-detect break objects at the top of the stack and ensure BREAK mode
         if self.mode in ["FOCUS", "BREAK"] and isinstance(self.triage_stack[0], Break):
             break_item = self.triage_stack[0]
             if not break_item.end_time:
@@ -1618,43 +1695,35 @@ class FocusCLI:
                 break_item.duration = 5
                 break_item.end_time = break_item.start_time + timedelta(minutes=5)
             self.mode = "BREAK"
-
-        found_active_meeting = False
+        due_meeting = self.stack.check_for_due_meetings()
+        if due_meeting:
+            state_str = due_meeting.state if due_meeting.state.strip() else ''
+            meeting_id = f"[{state_str}] {due_meeting.content}_{due_meeting.start_time}"
+            if meeting_id not in self.chimed_meetings:
+                if self.mode == "BREAK" and not isinstance(due_meeting, Break):
+                    self.break_meeting_interrupted = True
+                self.play_chime()
+                self.chimed_meetings.add(meeting_id)
+                self.timers.chimer.load(due_meeting.content)
+                self.last_msg = f"Meeting Starting: {due_meeting.content}"
+        if isinstance(self.triage_stack[0], Break) and self.triage_stack[0].is_active():
+            if self.mode != "BREAK":
+                self.mode = "BREAK"
+                self.last_msg = f"Break Meeting Started: {self.triage_stack[0].content}"
         for i, item in enumerate(self.triage_stack):
-            is_active_meeting = False
-            if isinstance(item, Meeting):
-                 is_active_meeting = item.is_active(now=now)
-
-            if is_active_meeting:
-                state_str = item.state if item.state.strip() else ''
-                meeting_id = f"[{state_str}] {item.content}_{item.start_time}"
-                if meeting_id not in self.chimed_meetings:
-                    if self.mode == "BREAK" and not isinstance(item, Break):
-                        self.break_meeting_interrupted = True
+            is_active = (isinstance(item, Meeting) and item.is_active(now=now))
+            if i == 0 and is_active:
+                if self.timers.chimer.meeting_name == item.content:
+                    self.timers.chimer.stop()
+                continue
+            if is_active:
+                if self.timers.chimer.meeting_name != item.content:
+                    self.timers.chimer.load(item.content)
+                self.last_msg = f"Meeting Starting: {item.content}"
+                if self.timers.chimer.should_chime(interval_seconds=15):
                     self.play_chime()
-                    # Reset the reminder interval so the FOCUS reminder
-                    # branch below does not double-chime in this same call.
-                    self.timers.last_chime_timestamp = time.time()
-                    self.chimed_meetings.add(meeting_id)
-                    self.last_msg = f"Meeting Starting: {item.content}"
+                break
 
-                if self.mode == "FOCUS":
-                    if i > 0 and not found_active_meeting:
-                        current_item = self.triage_stack[0]
-                        is_current_active_meeting = isinstance(current_item, (Meeting, Break)) and current_item.is_active()
-
-                        if not is_current_active_meeting:
-                            self.last_msg = f"Meeting Starting: {item.content}"
-                            if self.timers.should_chime(interval_seconds=15):
-                                self.play_chime()
-                            found_active_meeting = True
-
-                    if i == 0:
-                        found_active_meeting = True
-
-                        if isinstance(self.triage_stack[0], Break) and self.triage_stack[0].is_active():
-                            self.mode = "BREAK"
-                            self.last_msg = f"Break Meeting Started: {self.triage_stack[0].content}"
 
     def render_break(self):
         remaining = 0

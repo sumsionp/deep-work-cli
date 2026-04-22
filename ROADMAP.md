@@ -6,6 +6,8 @@
 - **Selector-based Navigation:** Implement `j/k` for navigation and `CTRL+hjkl` for reordering/indenting in Triage mode, replacing or supplementing the current numbered command system.
 - **Deadline Timer:** Countdown in the Focus Mode header for tasks with specific time-of-day deadlines.
 
+- **Schedule Command ('s'):** Implement a command to convert regular tasks into  objects or update existing meeting schedules directly from the command line (e.g., ).
+
 ## Completed Items
 - **Add Already Completed Task** Automatically complete top level notes that were entered prepended with '[x]'. These are added to the ledger, but not to the triage stack.
 - **Action-Specific Markers:** Transitioned from generic markers (like `------- Work -------`) to more specific ones like `------- Completed -------` or `------- Deferred -------` to improve ledger auditability.
