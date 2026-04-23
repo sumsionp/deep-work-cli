@@ -38,7 +38,7 @@ class TestNewTaskStack(unittest.TestCase):
             due = stack.check_for_due_meetings()
             self.assertEqual(due.content, due_meeting.content)
             self.assertEqual(len(stack.focus_queue), 2)
-            self.assertEqual(stack.focus_queue[1].content, due_meeting.content)
+            self.assertEqual(stack.focus_queue[0].content, due_meeting.content)
 
 if __name__ == '__main__':
     unittest.main()

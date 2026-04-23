@@ -212,6 +212,42 @@ class Meeting(Task):
         self.end_time = end_time
         self.duration = duration
 
+    def to_task(self):
+        """Converts this meeting to a regular Task, stripping time patterns."""
+        new_content = strip_meeting_time(self.content)
+        new_task = Task(new_content, self.indent, self.state)
+        new_task.children = copy.deepcopy(self.children)
+        for child in new_task.children:
+            child.parent = new_task
+        return new_task
+
+    def reschedule(self, time_str):
+        """Updates meeting time attributes based on a time string."""
+        # Use our existing parsing logic which is robust
+        m_time = self.parse_meeting_time(time_str)
+        if m_time:
+            self.start_time, self.end_time, self.duration = m_time
+            # Update content to reflect new time
+            base_content = strip_meeting_time(self.content)
+            self.content = f"{base_content} {self.start_time.strftime('%I:%M')}-{self.end_time.strftime('%I:%M %p')}"
+            return True
+
+        # Try just start time (keep duration)
+        now = datetime.now()
+        # Regex for just a time like "2 PM" or "2:30 PM"
+        m1 = re.search(r'^(\d{1,2}(?::\d{2})?)\s*(AM|PM)$', time_str.upper().strip())
+        if m1:
+            start_dt = self._parse_time_with_ampm(m1.group(1), m1.group(2), now)
+            duration = self.duration if self.duration else 60
+            self.start_time = start_dt
+            self.end_time = start_dt + timedelta(minutes=duration)
+            self.duration = duration
+            base_content = strip_meeting_time(self.content)
+            self.content = f"{base_content} {self.start_time.strftime('%I:%M')}-{self.end_time.strftime('%I:%M %p')}"
+            return True
+
+        return False
+
     @classmethod
     def from_attributes(cls, content, indent, state, start_time=None, end_time=None, duration=None):
         if start_time and end_time:
@@ -292,7 +328,11 @@ class Meeting(Task):
         elif ampm == 'AM' and h == 12:
             h = 0
 
-        return reference_date.replace(hour=h, minute=m, second=0, microsecond=0)
+        # Handle crossing midnight if the time is earlier than the reference date
+        dt = reference_date.replace(hour=h, minute=m, second=0, microsecond=0)
+        if dt < reference_date - timedelta(hours=6):
+             dt += timedelta(days=1)
+        return dt
 
     def is_active(self, now=None):
         if now is None:
@@ -304,6 +344,15 @@ class Meeting(Task):
 class Break(Meeting):
     """A meeting designed to act like a break, both scheduled and immediate"""
     REGEX = re.compile(r'^\[(B)\]\s*(.*)')
+
+    def to_task(self):
+        """Converts this break to a regular Task, stripping time patterns."""
+        new_content = strip_meeting_time(self.content)
+        new_task = Task(new_content, self.indent, ' ') # Break -> Task uses [ ]
+        new_task.children = copy.deepcopy(self.children)
+        for child in new_task.children:
+            child.parent = new_task
+        return new_task
 
     @classmethod
     def from_line(cls, line, indent=0):
@@ -587,8 +636,8 @@ class TaskStack:
         now = datetime.now()
         if self.meeting_timeline[0].is_active(now=now):
             due_meeting = self.meeting_timeline.pop(0)
-            if len(self.focus_queue) > 1: self.focus_queue.insert(1, due_meeting)
-            else: self.focus_queue.append(due_meeting)
+            # Move due meeting to focus (index 0)
+            self.focus_queue.insert(0, due_meeting)
             return due_meeting
         return None
 
@@ -745,11 +794,7 @@ class ResolveCommand(Command):
             cli.initial_stack = copy.deepcopy(cli.triage_stack)
             return
 
-        if base_cmd in ['x', '-', '>', '>>', 'i']:
-            if base_cmd in ['>', '>>']:
-                if cli._handle_defer_command_obj(base_cmd, self.parts):
-                    return
-
+        if base_cmd in ['x', '-', 'i']:
             effective_cmd = '-' if base_cmd == 'i' else base_cmd
             marker = 'x' if effective_cmd == 'x' else ('-' if effective_cmd == '-' else '>')
             ledger_label = 'Task Completed' if effective_cmd == 'x' else (
@@ -801,6 +846,135 @@ class EditCommand(Command):
                 cli.initial_stack = copy.deepcopy(cli.triage_stack)
             return "REDRAW"
 
+
+class DeferCommand(Command):
+    def execute(self, cli):
+        base_cmd = self.parts[0].lower()
+        if not cli.triage_stack:
+            return
+
+        remaining = " ".join(self.parts[1:]).strip()
+
+        # 1. Check for date/file deferral (>> or > tomorrow)
+        # Try parsing as date first to avoid confusing YYYYMMDD with index
+        target_date = None
+        if base_cmd == '>>':
+            target_date = parse_defer_date(remaining)
+        elif remaining:
+            target_date = parse_defer_date(remaining)
+
+        # 2. Parse target index if provided (e.g., >1, >-1)
+        target_idx = None
+        if target_date is None and base_cmd == '>' and len(self.parts) == 2:
+            arg = self.parts[1]
+            if arg.isdigit() or (arg.startswith('-') and arg[1:].isdigit()):
+                target_idx = int(arg)
+                if target_idx <= 0:
+                    target_idx = 1
+
+        if target_date:
+            ledger_items = []
+            target_items = []
+            target_res = None
+
+            def prepare_defer(item):
+                is_target_today = target_date.date() == datetime.now().date()
+                today_str = datetime.now().strftime(DATE_FORMAT)
+                is_current_file_today = today_str in FILENAME
+
+                if isinstance(item, Task):
+                    target = item.clone_with_state(' ', ' ')
+                    ledger = item.clone_with_state('>', '>')
+                else:
+                    target = copy.deepcopy(item)
+                    ledger = copy.deepcopy(item)
+
+                res = "today" if (is_target_today and is_current_file_today) else get_target_file(target_date)
+                return ledger, target, res
+
+            if base_cmd == '>>':
+                while cli.triage_stack:
+                    item = cli.triage_stack.pop(0)
+                    l_item, t_item, res = prepare_defer(item)
+                    ledger_items.append(l_item)
+                    target_items.append(t_item)
+                    target_res = res
+
+                if target_res == "today":
+                    cli.commit_to_ledger("Deferred", ledger_items)
+                    cli.triage_stack.extend(target_items)
+                else:
+                    cli.commit_to_ledger("Deferred from last session", target_items, target_file=target_res)
+                    cli.commit_to_ledger(f"Deferred to {target_res}", ledger_items)
+            else: # '>'
+                item = cli.triage_stack.pop(0)
+                l_item, t_item, res = prepare_defer(item)
+                if res == "today":
+                    cli.commit_to_ledger("Deferred", [l_item])
+                    cli.triage_stack.append(t_item)
+                else:
+                    cli.commit_to_ledger("Deferred from last session", [t_item], target_file=res)
+                    cli.commit_to_ledger(f"Deferred to {res}", [l_item])
+
+            cli.commit_to_ledger("Triage", cli.triage_stack)
+            cli.timers.task_timer.stop()
+            cli.initial_stack = copy.deepcopy(cli.triage_stack)
+            return
+
+        # 3. Handle Meeting/Break rescheduling or conversion
+        top_item = cli.triage_stack[0]
+        if isinstance(top_item, Meeting) and base_cmd == '>':
+            # Reschedule if we have a string that wasn't a date or a single index
+            if remaining and target_idx is None:
+                old_meeting = copy.deepcopy(top_item)
+                if top_item.reschedule(remaining):
+                    old_meeting.state = 'e'
+                    cli.commit_to_ledger("Rescheduled", [old_meeting, top_item])
+                    cli.last_msg = "Meeting Rescheduled"
+                    cli.timers.task_timer.stop()
+                    cli.initial_stack = copy.deepcopy(cli.triage_stack)
+                    cli.triage_stack.populate(cli.triage_stack.get_all())
+                    return
+
+            # If rescheduling failed OR no time string was provided (just > or >#)
+            # Convert to Task
+            old_meeting = copy.deepcopy(top_item)
+            old_meeting.state = 'e'
+            new_item = top_item.to_task()
+            cli.triage_stack.pop(0)
+            cli.commit_to_ledger("Converted to Task", [old_meeting, new_item])
+            cli.last_msg = "Converted Meeting to Task"
+
+            if target_idx is not None:
+                if target_idx >= len(cli.triage_stack):
+                    cli.triage_stack.append(new_item)
+                else:
+                    cli.triage_stack.insert(target_idx, new_item)
+            else:
+                cli.triage_stack.append(new_item)
+
+            cli.commit_to_ledger("Triage", cli.triage_stack)
+            cli.timers.task_timer.stop()
+            cli.initial_stack = copy.deepcopy(cli.triage_stack)
+            cli.triage_stack.populate(cli.triage_stack.get_all())
+            return
+
+        # 4. Handle regular Task Deferral
+        if base_cmd == '>':
+            item = cli.triage_stack.pop(0)
+            if target_idx is not None:
+                if target_idx >= len(cli.triage_stack):
+                    cli.triage_stack.append(item)
+                else:
+                    cli.triage_stack.insert(target_idx, item)
+            else:
+                # Default single defer: to the end of the focus_queue
+                cli.triage_stack.append(item)
+
+            cli.commit_to_ledger("Triage", cli.triage_stack)
+            cli.timers.task_timer.stop()
+            cli.initial_stack = copy.deepcopy(cli.triage_stack)
+            return
 
 class MiniTimerCommand(Command):
     def execute(self, cli):
@@ -879,7 +1053,8 @@ class IgnoreCommand(Command):
 class CommandParser:
     @staticmethod
     def parse(cli, cmd_string, mode):
-        cmd_clean = re.sub(r'^([a-zA-Z])(\d)', r'\1 \2', cmd_string)
+        # Split symbol commands from their numeric arguments (e.g., >1, n5, x2)
+        cmd_clean = re.sub(r'^(>>|>|[a-zA-Z]|[-x])(-?\d+)', r'\1 \2', cmd_string)
         try:
             parts = shlex.split(cmd_clean)
         except ValueError:
@@ -910,7 +1085,8 @@ class CommandParser:
         if base_cmd == 'f': return FocusCommand(parts)
         if base_cmd == 'e': return EditCommand(parts)
         if base_cmd == 'b': return BreakCommand(parts)
-        if base_cmd in ['x', '-', '>', '>>']: return ResolveCommand(parts)
+        if base_cmd in ['x', '-']: return ResolveCommand(parts)
+        if base_cmd in ['>', '>>']: return DeferCommand(parts)
         if base_cmd == 'i': return IgnoreCommand(parts)
         if base_cmd == 'm': return MiniTimerCommand(parts)
         if base_cmd == 'p': return ReorderCommand(parts)
@@ -1245,66 +1421,6 @@ class FocusCLI:
         finally:
             if os.path.exists(temp_path):
                 os.remove(temp_path)
-
-    def _handle_defer_command_obj(self, base_cmd, parts):
-        defer_date_str = " ".join(parts[1:])
-        target_date = parse_defer_date(defer_date_str)
-        if not target_date:
-            self.last_msg = f"Invalid date: {defer_date_str}"
-            return True
-
-        if not self.triage_stack:
-            return True
-
-        ledger_items = []
-        target_items = []
-        target_res = None
-
-        def prepare_defer(item):
-            is_target_today = target_date.date() == datetime.now().date()
-            today_str = datetime.now().strftime(DATE_FORMAT)
-            is_current_file_today = today_str in FILENAME
-
-            if isinstance(item, Task):
-                target = item.clone_with_state(' ', ' ')
-                ledger = item.clone_with_state('>', '>')
-            else:
-                target = copy.deepcopy(item)
-                ledger = copy.deepcopy(item)
-
-            res = "today" if (is_target_today and is_current_file_today) else get_target_file(target_date)
-            return ledger, target, res
-
-        if base_cmd == '>>':
-            count = len(self.triage_stack)
-            while self.triage_stack:
-                item = self.triage_stack.pop(0)
-                l_item, t_item, res = prepare_defer(item)
-                ledger_items.append(l_item)
-                target_items.append(t_item)
-                target_res = res
-
-            if target_res == "today":
-                self.commit_to_ledger("Deferred", ledger_items)
-                self.triage_stack.extend(target_items)
-            else:
-                self.commit_to_ledger("Deferred from last session", target_items, target_file=target_res)
-                self.commit_to_ledger(f"Deferred to {target_res}", ledger_items)
-        else: # '>'
-            item = self.triage_stack.pop(0)
-            l_item, t_item, res = prepare_defer(item)
-            if res == "today":
-                self.commit_to_ledger("Deferred", [l_item])
-                self.triage_stack.append(t_item)
-            else:
-                self.commit_to_ledger("Deferred from last session", [t_item], target_file=res)
-                self.commit_to_ledger(f"Deferred to {res}", [l_item])
-
-        self.commit_to_ledger("Triage", self.triage_stack)
-        self.timers.task_timer.stop()
-        self.initial_stack = copy.deepcopy(self.triage_stack)
-        return True
-
 
     def _get_recursive_focus(self, item):
         """Recursively find the deepest pending task."""
@@ -1695,17 +1811,27 @@ class FocusCLI:
                 break_item.duration = 5
                 break_item.end_time = break_item.start_time + timedelta(minutes=5)
             self.mode = "BREAK"
+
+        # Check for due meetings before processing current stack
         due_meeting = self.stack.check_for_due_meetings()
+
+        # If the top item is an active meeting (either already there or just preempted)
+        # We still want to handle chime alerts if it just started.
+        top_item = self.triage_stack[0]
+        if isinstance(top_item, Meeting) and top_item.is_active(now=now):
+             state_str = top_item.state if top_item.state.strip() else ''
+             meeting_id = f"[{state_str}] {top_item.content}_{top_item.start_time}"
+             if meeting_id not in self.chimed_meetings:
+                 if self.mode == "BREAK" and not isinstance(top_item, Break):
+                     self.break_meeting_interrupted = True
+                 self.play_chime()
+                 self.chimed_meetings.add(meeting_id)
+                 self.timers.chimer.load(top_item.content)
+                 self.last_msg = f"Meeting Starting: {top_item.content}"
+
         if due_meeting:
-            state_str = due_meeting.state if due_meeting.state.strip() else ''
-            meeting_id = f"[{state_str}] {due_meeting.content}_{due_meeting.start_time}"
-            if meeting_id not in self.chimed_meetings:
-                if self.mode == "BREAK" and not isinstance(due_meeting, Break):
-                    self.break_meeting_interrupted = True
-                self.play_chime()
-                self.chimed_meetings.add(meeting_id)
-                self.timers.chimer.load(due_meeting.content)
-                self.last_msg = f"Meeting Starting: {due_meeting.content}"
+             # Already handled by top_item logic above if it was successfully moved to index 0
+             pass
         if isinstance(self.triage_stack[0], Break) and self.triage_stack[0].is_active():
             if self.mode != "BREAK":
                 self.mode = "BREAK"
@@ -1713,8 +1839,10 @@ class FocusCLI:
         for i, item in enumerate(self.triage_stack):
             is_active = (isinstance(item, Meeting) and item.is_active(now=now))
             if i == 0 and is_active:
+                # If it's already at the top and active, we handle reminders here.
                 if self.timers.chimer.meeting_name == item.content:
-                    self.timers.chimer.stop()
+                     if self.timers.chimer.should_chime(interval_seconds=15):
+                         self.play_chime()
                 continue
             if is_active:
                 if self.timers.chimer.meeting_name != item.content:
