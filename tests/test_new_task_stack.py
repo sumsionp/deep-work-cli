@@ -37,6 +37,12 @@ class TestNewTaskStack(unittest.TestCase):
             mock_datetime.now.return_value = now
             due = stack.check_for_due_meetings()
             self.assertEqual(due.content, due_meeting.content)
+            self.assertEqual(len(stack.focus_queue), 1)
+            self.assertEqual(stack.focus_queue[0].content, "Focused")
+
+            # Now promote it
+            promoted = stack.promote_due_meetings()
+            self.assertEqual(promoted.content, due_meeting.content)
             self.assertEqual(len(stack.focus_queue), 2)
             self.assertEqual(stack.focus_queue[0].content, due_meeting.content)
 

@@ -111,11 +111,11 @@ class TestMeetingInterruption(unittest.TestCase):
             # reminder branch would also fire in this same call, producing 2.
             self.cli.check_meetings()
 
-        # 5. Verify results: meeting PREEMPTS task (index 0), mode stays FOCUS,
+        # 5. Verify results: task STAYS on top (No Takeover), mode stays FOCUS,
         # initial chime fired exactly once (no double-chime)
         self.assertEqual(self.cli.mode, "FOCUS")
         self.assertEqual(self.cli.last_msg, "Meeting Starting: " + meeting_item.content)
-        self.assertEqual(self.cli.triage_stack[0].content, meeting_item.content)
+        self.assertEqual(self.cli.triage_stack[0], task_item)
         self.assertEqual(self.cli.play_chime.call_count, 1)
 
         # 6. An immediate follow-up call should not re-chime — the 15s
@@ -127,13 +127,12 @@ class TestMeetingInterruption(unittest.TestCase):
 
         # 7. Simulate the reminder interval elapsing by rewinding the
         # timer's last_chime_timestamp, then call again — should chime
-        # NOTE: After preemption, the meeting is at index 0.
-        # check_meetings handles chime for item at index 0 via chimer if it's active.
+        # NOTE: Task is still on top, meeting is due in timeline.
         self.cli.timers.chimer.last_chime_timestamp = 0
         with patch('focuscli.datetime') as mock_datetime:
             mock_datetime.now.return_value = future_now + timedelta(seconds=20)
             self.cli.check_meetings()
-        # Chime SHOULD happen because we restored reminder logic for meetings at index 0.
+        # Chime SHOULD happen because the meeting is due in the timeline
         self.assertEqual(self.cli.play_chime.call_count, 2)
 
 if __name__ == '__main__':

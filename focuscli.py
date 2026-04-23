@@ -632,14 +632,22 @@ class TaskStack:
         return id(self) == id(other)
 
     def check_for_due_meetings(self):
+        """Returns the first meeting from the timeline if it is currently active."""
         if not self.meeting_timeline: return None
         now = datetime.now()
         if self.meeting_timeline[0].is_active(now=now):
-            due_meeting = self.meeting_timeline.pop(0)
-            # Move due meeting to focus (index 0)
-            self.focus_queue.insert(0, due_meeting)
-            return due_meeting
+            return self.meeting_timeline[0]
         return None
+
+    def promote_due_meetings(self):
+        """Moves active meetings from the timeline to the focus position."""
+        now = datetime.now()
+        promoted = []
+        while self.meeting_timeline and self.meeting_timeline[0].is_active(now=now):
+             due_meeting = self.meeting_timeline.pop(0)
+             self.focus_queue.insert(0, due_meeting)
+             promoted.append(due_meeting)
+        return promoted[0] if promoted else None
 
 class Command:
     """Base class for all CLI commands."""
@@ -803,6 +811,7 @@ class ResolveCommand(Command):
 
             if not focus_path:
                 item_to_record = cli.triage_stack.pop(0)
+                cli.triage_stack.promote_due_meetings()
                 resolved_top = item_to_record.clone_with_state(marker, marker) if isinstance(item_to_record, Task) else item_to_record
                 cli.commit_to_ledger(ledger_label, [resolved_top])
             else:
@@ -942,6 +951,7 @@ class DeferCommand(Command):
             old_meeting.state = 'e'
             new_item = top_item.to_task()
             cli.triage_stack.pop(0)
+            cli.triage_stack.promote_due_meetings()
             cli.commit_to_ledger("Converted to Task", [old_meeting, new_item])
             cli.last_msg = "Converted Meeting to Task"
 
@@ -962,6 +972,7 @@ class DeferCommand(Command):
         # 4. Handle regular Task Deferral
         if base_cmd == '>':
             item = cli.triage_stack.pop(0)
+            cli.triage_stack.promote_due_meetings()
             if target_idx is not None:
                 if target_idx >= len(cli.triage_stack):
                     cli.triage_stack.append(item)
@@ -1812,11 +1823,26 @@ class FocusCLI:
                 break_item.end_time = break_item.start_time + timedelta(minutes=5)
             self.mode = "BREAK"
 
-        # Check for due meetings before processing current stack
+        # Check for due meetings (alerts only, no takeover)
+        # However, if the program automatically transitioned to BREAK mode because of a scheduled break meeting [B],
+        # then we SHOULD move it to index 0.
         due_meeting = self.stack.check_for_due_meetings()
 
-        # If the top item is an active meeting (either already there or just preempted)
-        # We still want to handle chime alerts if it just started.
+        if due_meeting and isinstance(due_meeting, Break) and due_meeting.state == 'B':
+             self.stack.promote_due_meetings()
+
+        if due_meeting:
+             state_str = due_meeting.state if due_meeting.state.strip() else ''
+             meeting_id = f"[{state_str}] {due_meeting.content}_{due_meeting.start_time}"
+             if meeting_id not in self.chimed_meetings:
+                 if self.mode == "BREAK" and not isinstance(due_meeting, Break):
+                     self.break_meeting_interrupted = True
+                 self.play_chime()
+                 self.chimed_meetings.add(meeting_id)
+                 self.timers.chimer.load(due_meeting.content)
+                 self.last_msg = f"Meeting Starting: {due_meeting.content}"
+
+        # If the top item is an active meeting
         top_item = self.triage_stack[0]
         if isinstance(top_item, Meeting) and top_item.is_active(now=now):
              state_str = top_item.state if top_item.state.strip() else ''
@@ -1828,10 +1854,6 @@ class FocusCLI:
                  self.chimed_meetings.add(meeting_id)
                  self.timers.chimer.load(top_item.content)
                  self.last_msg = f"Meeting Starting: {top_item.content}"
-
-        if due_meeting:
-             # Already handled by top_item logic above if it was successfully moved to index 0
-             pass
         if isinstance(self.triage_stack[0], Break) and self.triage_stack[0].is_active():
             if self.mode != "BREAK":
                 self.mode = "BREAK"
