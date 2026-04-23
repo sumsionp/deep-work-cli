@@ -517,7 +517,7 @@ class CountdownTimer(BaseTimer):
         self.last_tick = time.time()
 
     def should_chime(self, interval_seconds=30):
-        if self.remaining_seconds <= 0:
+        if self.is_active and self.remaining_seconds <= 0:
             now = time.time()
             if now - self.last_chime_timestamp >= interval_seconds:
                 self.last_chime_timestamp = now
@@ -536,6 +536,9 @@ class Chimer(CountdownTimer):
         self.meeting_name = meeting_name
         self.start(0)
         self.last_chime_timestamp = time.time()
+
+    def stop(self):
+        self.is_active = False
 
     def should_chime(self, interval_seconds=15):
         return super().should_chime(interval_seconds)
@@ -579,19 +582,32 @@ class TaskStack:
         self.focus_queue = []
         self.meeting_timeline = []
         now = datetime.now()
-        active_meetings = []
+
+        # No Takeover Rule:
+        # 1. Any active meeting already at items[0] stays in focus_queue
+        # 2. Other active meetings go to meeting_timeline
+
+        active_focus = []
+        active_due = []
+        future_meetings = []
         regular_items = []
-        for item in items:
+
+        for i, item in enumerate(items):
             if isinstance(item, Meeting):
                 if item.is_active(now=now):
-                    active_meetings.append(item)
+                    if i == 0:
+                        active_focus.append(item)
+                    else:
+                        active_due.append(item)
                 elif item.start_time and item.start_time > now:
-                    self.meeting_timeline.append(item)
+                    future_meetings.append(item)
                 else:
                     regular_items.append(item)
             else:
                 regular_items.append(item)
-        self.focus_queue = active_meetings + regular_items
+
+        self.focus_queue = active_focus + regular_items
+        self.meeting_timeline = active_due + future_meetings
         self.meeting_timeline.sort(key=lambda m: m.start_time)
 
     def get_focus_queue(self): return self.focus_queue
@@ -1823,56 +1839,48 @@ class FocusCLI:
                 break_item.end_time = break_item.start_time + timedelta(minutes=5)
             self.mode = "BREAK"
 
-        # Check for due meetings (alerts only, no takeover)
-        # However, if the program automatically transitioned to BREAK mode because of a scheduled break meeting [B],
-        # then we SHOULD move it to index 0.
+        # 1. Automatic takeover for scheduled break meetings [B]
         due_meeting = self.stack.check_for_due_meetings()
-
         if due_meeting and isinstance(due_meeting, Break) and due_meeting.state == 'B':
              self.stack.promote_due_meetings()
 
-        if due_meeting:
-             state_str = due_meeting.state if due_meeting.state.strip() else ''
-             meeting_id = f"[{state_str}] {due_meeting.content}_{due_meeting.start_time}"
+        # 2. Initial "Meeting Starting" chime (for focused OR due meetings)
+        all_active_meetings = [m for m in self.triage_stack if isinstance(m, Meeting) and m.is_active(now=now)]
+        for m in all_active_meetings:
+             state_str = m.state if m.state.strip() else ''
+             meeting_id = f"[{state_str}] {m.content}_{m.start_time}"
              if meeting_id not in self.chimed_meetings:
-                 if self.mode == "BREAK" and not isinstance(due_meeting, Break):
+                 if self.mode == "BREAK" and not isinstance(m, Break):
                      self.break_meeting_interrupted = True
                  self.play_chime()
                  self.chimed_meetings.add(meeting_id)
-                 self.timers.chimer.load(due_meeting.content)
-                 self.last_msg = f"Meeting Starting: {due_meeting.content}"
+                 self.timers.chimer.load(m.content)
+                 self.last_msg = f"Meeting Starting: {m.content}"
 
-        # If the top item is an active meeting
-        top_item = self.triage_stack[0]
-        if isinstance(top_item, Meeting) and top_item.is_active(now=now):
-             state_str = top_item.state if top_item.state.strip() else ''
-             meeting_id = f"[{state_str}] {top_item.content}_{top_item.start_time}"
-             if meeting_id not in self.chimed_meetings:
-                 if self.mode == "BREAK" and not isinstance(top_item, Break):
-                     self.break_meeting_interrupted = True
-                 self.play_chime()
-                 self.chimed_meetings.add(meeting_id)
-                 self.timers.chimer.load(top_item.content)
-                 self.last_msg = f"Meeting Starting: {top_item.content}"
+        # 3. Handle 15s reminders only for the "due" meeting (meeting_timeline[0])
+        # Note: TaskStack.populate ensures active non-focused meetings are in meeting_timeline
+        due_meeting = self.stack.check_for_due_meetings()
+        if due_meeting:
+            # We already handled initial chime above.
+            # Handle recurring reminders:
+            if self.timers.chimer.meeting_name != due_meeting.content:
+                 self.timers.chimer.load(due_meeting.content)
+
+            if self.timers.chimer.should_chime(interval_seconds=15):
+                self.play_chime()
+        else:
+             # If no due meeting is in timeline, check if the focused task is a meeting
+             top_item = self.triage_stack[0]
+             if isinstance(top_item, Meeting) and top_item.is_active(now=now):
+                  # Focused meetings should NOT trigger recurring chimes
+                  if self.timers.chimer.meeting_name == top_item.content:
+                       self.timers.chimer.stop()
+
+        # 4. Mode transition for started break meetings
         if isinstance(self.triage_stack[0], Break) and self.triage_stack[0].is_active():
             if self.mode != "BREAK":
                 self.mode = "BREAK"
                 self.last_msg = f"Break Meeting Started: {self.triage_stack[0].content}"
-        for i, item in enumerate(self.triage_stack):
-            is_active = (isinstance(item, Meeting) and item.is_active(now=now))
-            if i == 0 and is_active:
-                # If it's already at the top and active, we handle reminders here.
-                if self.timers.chimer.meeting_name == item.content:
-                     if self.timers.chimer.should_chime(interval_seconds=15):
-                         self.play_chime()
-                continue
-            if is_active:
-                if self.timers.chimer.meeting_name != item.content:
-                    self.timers.chimer.load(item.content)
-                self.last_msg = f"Meeting Starting: {item.content}"
-                if self.timers.chimer.should_chime(interval_seconds=15):
-                    self.play_chime()
-                break
 
 
     def render_break(self):

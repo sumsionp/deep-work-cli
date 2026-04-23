@@ -18,10 +18,17 @@ class TestNewTaskStack(unittest.TestCase):
         stack = TaskStack()
         stack.populate([task, active_meeting, future_meeting])
 
+        # Active meeting not promoted should be in meeting_timeline
+        self.assertEqual(len(stack.focus_queue), 1)
+        self.assertEqual(len(stack.meeting_timeline), 2)
+        self.assertIn(active_meeting, stack.meeting_timeline)
+        self.assertIn(future_meeting, stack.meeting_timeline)
+
+        # Promote it
+        stack.promote_due_meetings()
         self.assertEqual(len(stack.focus_queue), 2)
         self.assertEqual(len(stack.meeting_timeline), 1)
         self.assertIn(active_meeting, stack.focus_queue)
-        self.assertIn(future_meeting, stack.meeting_timeline)
 
     def test_due_meeting_logic(self):
         now = datetime.now()

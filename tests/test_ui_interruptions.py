@@ -135,5 +135,34 @@ class TestMeetingInterruption(unittest.TestCase):
         # Chime SHOULD happen because the meeting is due in the timeline
         self.assertEqual(self.cli.play_chime.call_count, 2)
 
+    def test_no_reminder_when_meeting_focused(self):
+        from focuscli import Meeting
+        # 1. Setup a focused meeting
+        now = datetime.now()
+        meeting = Meeting.from_attributes("Focused Meeting", 0, ' ', start_time=now - timedelta(minutes=1), duration=30)
+        meeting.promoted = True
+        self.cli.triage_stack = [meeting]
+        self.cli.mode = "FOCUS"
+
+        # Mark as already chimed
+        state_str = meeting.state if meeting.state.strip() else ''
+        meeting_id = f"[{state_str}] {meeting.content}_{meeting.start_time}"
+        self.cli.chimed_meetings.add(meeting_id)
+
+        # Load chimer (simulating initial chime already happened)
+        self.cli.timers.chimer.load(meeting.content)
+        self.cli.play_chime.reset_mock()
+
+        # 2. Fast forward and call check_meetings
+        self.cli.timers.chimer.last_chime_timestamp = 0
+        with patch('focuscli.datetime') as mock_datetime:
+            mock_datetime.now.return_value = now + timedelta(seconds=20)
+            self.cli.check_meetings()
+
+        # 3. Should NOT chime because it's focused
+        self.cli.play_chime.assert_not_called()
+        # The chimer is stopped by check_meetings for index 0
+        self.assertFalse(self.cli.timers.chimer.is_active)
+
 if __name__ == '__main__':
     unittest.main()
