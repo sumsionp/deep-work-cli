@@ -592,7 +592,15 @@ class TaskStack:
         future_meetings = []
         regular_items = []
 
-        for i, item in enumerate(items):
+        # Deduplicate while preserving order to prevent an item from being in both lists
+        seen_ids = set()
+        unique_items = []
+        for item in items:
+            if id(item) not in seen_ids:
+                unique_items.append(item)
+                seen_ids.add(id(item))
+
+        for i, item in enumerate(unique_items):
             if isinstance(item, Meeting):
                 if item.is_active(now=now):
                     if i == 0:
@@ -1861,18 +1869,16 @@ class FocusCLI:
         # Note: TaskStack.populate ensures active non-focused meetings are in meeting_timeline
         due_meeting = self.stack.check_for_due_meetings()
         if due_meeting:
-            # We already handled initial chime above.
-            # Handle recurring reminders:
+            # Handle recurring reminders for meeting in timeline:
             if self.timers.chimer.meeting_name != due_meeting.content:
                  self.timers.chimer.load(due_meeting.content)
 
             if self.timers.chimer.should_chime(interval_seconds=15):
                 self.play_chime()
         else:
-             # If no due meeting is in timeline, check if the focused task is a meeting
+             # If no due meeting is in timeline, focused meetings should NOT trigger reminders
              top_item = self.triage_stack[0]
              if isinstance(top_item, Meeting) and top_item.is_active(now=now):
-                  # Focused meetings should NOT trigger recurring chimes
                   if self.timers.chimer.meeting_name == top_item.content:
                        self.timers.chimer.stop()
 
