@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 import os
 import shutil
 import tempfile
@@ -15,10 +16,6 @@ class TestRescueTask(unittest.TestCase):
         self.test_dir = tempfile.mkdtemp()
         self.old_cwd = os.getcwd()
         os.chdir(self.test_dir)
-        # Re-import to ensure we have a fresh FILENAME mock
-        import focuscli
-        import importlib
-        importlib.reload(focuscli)
         self.cli = FocusCLI()
 
     def tearDown(self):
@@ -42,9 +39,8 @@ class TestRescueTask(unittest.TestCase):
             f.write("Note alone\n")
 
         # Mock FILENAME to today's file
-        import focuscli
-        focuscli.FILENAME = today_file
-        self.cli.rescue_previous_tasks()
+        with patch('focuscli.FILENAME', today_file):
+            self.cli.rescue_previous_tasks()
 
         # Check if today's file exists and has the rescued task
         self.assertTrue(os.path.exists(today_file))
@@ -78,9 +74,8 @@ class TestRescueTask(unittest.TestCase):
         with open(f"{day2_str}-plan.txt", 'w') as f:
             f.write("[] Task Day 2\n")
 
-        import focuscli
-        focuscli.FILENAME = f"{today_str}-plan.txt"
-        self.cli.rescue_previous_tasks()
+        with patch('focuscli.FILENAME', f"{today_str}-plan.txt"):
+            self.cli.rescue_previous_tasks()
 
         with open(f"{today_str}-plan.txt", 'r') as f:
             content = f.read()
@@ -101,18 +96,17 @@ class TestRescueTask(unittest.TestCase):
         with open(today_file, 'w') as f:
             f.write("[] Task to defer\n")
 
-        import focuscli
-        focuscli.FILENAME = today_file
-        self.cli.load_context() # To populate triage_stack
+        with patch('focuscli.FILENAME', today_file):
+            self.cli.load_context() # To populate triage_stack
 
-        # Defer Task to tomorrow
-        self.cli.handle_command(f"> {tomorrow_str}")
+            # Defer Task to tomorrow
+            self.cli.handle_command(f"> {tomorrow_str}")
 
-        # Check today's file for "Deferred to YYYYMMDD-plan.txt"
-        with open(today_file, 'r') as f:
-            content = f.read()
-            self.assertIn(f"Deferred to {tomorrow_file}", content)
-            self.assertIn("[>] Task to defer", content)
+            # Check today's file for "Deferred to YYYYMMDD-plan.txt"
+            with open(today_file, 'r') as f:
+                content = f.read()
+                self.assertIn(f"Deferred to {tomorrow_file}", content)
+                self.assertIn("[>] Task to defer", content)
 
 if __name__ == '__main__':
     unittest.main()

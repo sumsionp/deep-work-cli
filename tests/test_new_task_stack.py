@@ -18,10 +18,17 @@ class TestNewTaskStack(unittest.TestCase):
         stack = TaskStack()
         stack.populate([task, active_meeting, future_meeting])
 
+        # Active meeting not promoted should be in meeting_timeline
+        self.assertEqual(len(stack.focus_queue), 1)
+        self.assertEqual(len(stack.meeting_timeline), 2)
+        self.assertIn(active_meeting, stack.meeting_timeline)
+        self.assertIn(future_meeting, stack.meeting_timeline)
+
+        # Promote it
+        stack.promote_due_meetings()
         self.assertEqual(len(stack.focus_queue), 2)
         self.assertEqual(len(stack.meeting_timeline), 1)
         self.assertIn(active_meeting, stack.focus_queue)
-        self.assertIn(future_meeting, stack.meeting_timeline)
 
     def test_due_meeting_logic(self):
         now = datetime.now()
@@ -37,8 +44,14 @@ class TestNewTaskStack(unittest.TestCase):
             mock_datetime.now.return_value = now
             due = stack.check_for_due_meetings()
             self.assertEqual(due.content, due_meeting.content)
+            self.assertEqual(len(stack.focus_queue), 1)
+            self.assertEqual(stack.focus_queue[0].content, "Focused")
+
+            # Now promote it
+            promoted = stack.promote_due_meetings()
+            self.assertEqual(promoted.content, due_meeting.content)
             self.assertEqual(len(stack.focus_queue), 2)
-            self.assertEqual(stack.focus_queue[1].content, due_meeting.content)
+            self.assertEqual(stack.focus_queue[0].content, due_meeting.content)
 
 if __name__ == '__main__':
     unittest.main()

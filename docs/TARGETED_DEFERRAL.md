@@ -26,20 +26,3 @@ If the focused task is a Meeting or a Break, there are two options:
   ie: `>` moves it to the end of the focus_queue and `>#` moves it to the specified index.
   Any time block that is part of the Meeting or Break content is stripped out so that it will be parsed as a regular Task.
   Since the content is changed, the old version of the Meeting or Break is written to the ledger with [e] status just as if it had been edited.
-
-## Blocking Functionality
-
-There are some things that need to be taken care of before this feature will be truly helpful.
-
-- Deferral of meetings and breaks needs to be handled by properly changing the timestamp of the meeting or break.
-  This may take some extensive work since the user will need to specify the new timestamp, essentially rescheduling the meeting or break.
-- This feature will make at least the third command that can take a number as a parameter.
-  The parsing functionality should be shared between these commands.
-- The current functionality of moving the next pending meeting to focus_queue[1] may need to change.
-  This becomes problematic when we start adding meetings or reordering meetings  with functionality like `>`.
-  I don't want to handle complex ordering functionality in this command.
-  I want all that logic to stay in check_for_due_meetings.
-  One way to handle this is to call check_for_due_meetings when resolving any task.
-  If an due meeting is found, it becomes the focused task.
-  Thus, all added or reordered Meetings and Breaks could simply be put in meeting_timeline.
-  This actually makes the code cleaner since focus_queue would only ever hold a Meeting or Break object at [0].
