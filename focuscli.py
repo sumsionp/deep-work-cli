@@ -739,7 +739,27 @@ class AddCommand(Command):
 
         items = []
         if remaining_parts is not None:
-            if remaining_parts:
+            if len(remaining_parts) == 1:
+                template_name = remaining_parts[0]
+                template_dir = "templates"
+                if not os.path.exists(template_dir):
+                    os.makedirs(template_dir)
+                template_path = os.path.join(template_dir, f"{template_name}.txt")
+
+                initial_content = None
+                if os.path.exists(template_path):
+                    with open(template_path, 'r') as f:
+                        initial_content = f.read()
+
+                lines = cli._get_multi_line_input(initial_content=initial_content)
+                if lines:
+                    # Save back to template
+                    with open(template_path, 'w') as f:
+                        f.write("\n".join(lines))
+                    items = cli._process_multi_line_input(lines)
+                else:
+                    return
+            elif remaining_parts:
                 full_line = " ".join(remaining_parts)
                 items = cli._process_multi_line_input([full_line])
             else:
@@ -1397,9 +1417,18 @@ class FocusCLI:
 
         return [active_items[(c,)] for c in top_level_contents if (c,) in active_items]
 
-    def _get_multi_line_input(self, context_lines=None):
+    def _get_multi_line_input(self, context_lines=None, initial_content=None):
         with tempfile.NamedTemporaryFile(suffix=".txt", mode='w+', delete=False) as tf:
-            tf.write("\n")
+            if initial_content:
+                if isinstance(initial_content, list):
+                    tf.write("\n".join(initial_content))
+                else:
+                    tf.write(initial_content)
+                if not (isinstance(initial_content, str) and initial_content.endswith('\n')):
+                    tf.write("\n")
+            else:
+                tf.write("\n")
+
             tf.write("\n\n")
             tf.write("# Enter one task or note per line\n")
             if context_lines:
@@ -1408,6 +1437,8 @@ class FocusCLI:
             temp_path = tf.name
 
         try:
+            # Use +$ to go to the end if we have initial content?
+            # Or just let the user decide. +startinsert is fine.
             self._run_with_vi(["+startinsert", temp_path])
             with open(temp_path, 'r') as f:
                 lines = [l.rstrip() for l in f.readlines() if not l.startswith('#')]
