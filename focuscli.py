@@ -740,7 +740,7 @@ class AddCommand(Command):
         items = []
         if remaining_parts is not None:
             if len(remaining_parts) == 1:
-                template_name = remaining_parts[0]
+                template_name = os.path.basename(remaining_parts[0])
                 template_dir = "templates"
                 if not os.path.exists(template_dir):
                     os.makedirs(template_dir)

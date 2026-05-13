@@ -113,5 +113,17 @@ class TestTemplates(unittest.TestCase):
         self.assertEqual(self.cli.triage_stack[1].content, "Inserted Task")
         self.assertEqual(self.cli.triage_stack[2].content, "Task 1")
 
+    @patch('focuscli.FocusCLI._get_multi_line_input')
+    def test_sanitize_template_name(self, mock_input):
+        # Setup: n ../dangerous
+        mock_input.return_value = ["[] Safe Task"]
+
+        cmd = AddCommand(['n', '../dangerous'])
+        cmd.execute(self.cli)
+
+        # Verify template was created in the templates directory, NOT the parent
+        self.assertFalse(os.path.exists(os.path.join(self.test_dir, "dangerous.txt")))
+        self.assertTrue(os.path.exists(os.path.join(self.test_dir, "templates", "dangerous.txt")))
+
 if __name__ == '__main__':
     unittest.main()
