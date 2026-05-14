@@ -125,5 +125,28 @@ class TestTemplates(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(self.test_dir, "dangerous.txt")))
         self.assertTrue(os.path.exists(os.path.join(self.test_dir, "templates", "dangerous.txt")))
 
+    @patch('focuscli.FocusCLI._get_multi_line_input')
+    def test_discard_empty_template(self, mock_input):
+        # Case 1: New template with only blank lines
+        mock_input.return_value = ["", "  ", "\n"]
+        cmd = AddCommand(['n', 'fatfinger'])
+        cmd.execute(self.cli)
+
+        template_path = os.path.join("templates", "fatfinger.txt")
+        self.assertFalse(os.path.exists(template_path))
+        self.assertEqual(self.cli.last_msg, "Empty template discarded.")
+
+        # Case 2: Clearing an existing template
+        os.makedirs("templates", exist_ok=True)
+        with open(os.path.join("templates", "exists.txt"), 'w') as f:
+            f.write("Some content")
+
+        mock_input.return_value = []
+        cmd = AddCommand(['n', 'exists'])
+        cmd.execute(self.cli)
+
+        self.assertFalse(os.path.exists(os.path.join("templates", "exists.txt")))
+        self.assertEqual(self.cli.last_msg, "Empty template discarded.")
+
 if __name__ == '__main__':
     unittest.main()

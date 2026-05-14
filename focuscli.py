@@ -752,12 +752,17 @@ class AddCommand(Command):
                         initial_content = f.read()
 
                 lines = cli._get_multi_line_input(initial_content=initial_content)
-                if lines:
+                # Filter out blank lines to check if we have actual content
+                has_content = any(l.strip() for l in lines)
+                if has_content:
                     # Save back to template
                     with open(template_path, 'w') as f:
                         f.write("\n".join(lines))
                     items = cli._process_multi_line_input(lines)
                 else:
+                    if os.path.exists(template_path):
+                        os.remove(template_path)
+                    cli.last_msg = "Empty template discarded."
                     return
             elif remaining_parts:
                 full_line = " ".join(remaining_parts)
