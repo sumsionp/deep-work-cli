@@ -739,7 +739,7 @@ class AddCommand(Command):
 
         items = []
         if remaining_parts is not None:
-            if len(remaining_parts) == 1:
+            if len(remaining_parts) == 1 and " " not in remaining_parts[0] and "\t" not in remaining_parts[0]:
                 template_name = os.path.basename(remaining_parts[0])
                 template_dir = "templates"
                 if not os.path.exists(template_dir):

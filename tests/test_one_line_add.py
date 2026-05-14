@@ -15,7 +15,7 @@ class TestOneLineAdd(unittest.TestCase):
         # Mock ledger to avoid file IO
         self.cli.commit_to_ledger = MagicMock()
         # Mock vi input to avoid terminal hangs
-        self.cli._get_multi_line_input = lambda context_lines=None: []
+        self.cli._get_multi_line_input = lambda context_lines=None, initial_content=None: []
 
     def test_n_one_line_top_level(self):
         self.cli.mode = "TRIAGE"

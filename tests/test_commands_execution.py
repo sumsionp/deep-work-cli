@@ -14,6 +14,7 @@ class TestCommandsExecution(unittest.TestCase):
             self.cli = FocusCLI()
         self.cli.commit_to_ledger = MagicMock()
         self.cli._process_multi_line_input = MagicMock()
+        self.cli._get_multi_line_input = MagicMock(return_value=[])
 
     def test_triage_command_execution(self):
         cmd = TriageCommand(["t"])
