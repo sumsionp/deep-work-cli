@@ -747,11 +747,16 @@ class AddCommand(Command):
                 template_path = os.path.join(template_dir, f"{template_name}.txt")
 
                 initial_content = None
-                if os.path.exists(template_path):
+                exists = os.path.exists(template_path)
+                if exists:
                     with open(template_path, 'r') as f:
                         initial_content = f.read()
 
-                lines = cli._get_multi_line_input(initial_content=initial_content)
+                lines = cli._get_multi_line_input(
+                    initial_content=initial_content,
+                    start_insert=not exists,
+                    add_open_line=not exists
+                )
                 # Strip leading/trailing blank lines from the captured session
                 while lines and not lines[0].strip():
                     lines.pop(0)
@@ -1433,9 +1438,10 @@ class FocusCLI:
 
         return [active_items[(c,)] for c in top_level_contents if (c,) in active_items]
 
-    def _get_multi_line_input(self, context_lines=None, initial_content=None):
+    def _get_multi_line_input(self, context_lines=None, initial_content=None, start_insert=True, add_open_line=True):
         with tempfile.NamedTemporaryFile(suffix=".txt", mode='w+', delete=False) as tf:
-            tf.write("\n")
+            if add_open_line:
+                tf.write("\n")
             if initial_content:
                 if isinstance(initial_content, list):
                     tf.write("\n".join(l.rstrip() for l in initial_content))
@@ -1449,7 +1455,10 @@ class FocusCLI:
             temp_path = tf.name
 
         try:
-            self._run_with_vi(["+startinsert", temp_path])
+            vi_args = [temp_path]
+            if start_insert:
+                vi_args.insert(0, "+startinsert")
+            self._run_with_vi(vi_args)
             with open(temp_path, 'r') as f:
                 lines = [l.rstrip() for l in f.readlines() if not l.startswith('#')]
             return lines

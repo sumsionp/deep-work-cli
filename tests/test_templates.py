@@ -59,8 +59,12 @@ class TestTemplates(unittest.TestCase):
         cmd = AddCommand(['n', 'daily'])
         cmd.execute(self.cli)
 
-        # Verify _get_multi_line_input was called with existing content
-        mock_input.assert_called_once_with(initial_content="[] Existing Task")
+        # Verify _get_multi_line_input was called with existing content and proper flags
+        mock_input.assert_called_once_with(
+            initial_content="[] Existing Task",
+            start_insert=False,
+            add_open_line=False
+        )
 
         # Verify template was updated
         with open(template_path, 'r') as f:
