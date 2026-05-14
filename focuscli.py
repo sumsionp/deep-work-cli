@@ -739,7 +739,38 @@ class AddCommand(Command):
 
         items = []
         if remaining_parts is not None:
-            if remaining_parts:
+            if len(remaining_parts) == 1 and not re.search(r'\s', remaining_parts[0]):
+                template_name = os.path.basename(remaining_parts[0])
+                template_dir = "templates"
+                if not os.path.exists(template_dir):
+                    os.makedirs(template_dir)
+                template_path = os.path.join(template_dir, f"{template_name}.txt")
+
+                initial_content = None
+                exists = os.path.exists(template_path)
+                if exists:
+                    with open(template_path, 'r') as f:
+                        initial_content = f.read()
+
+                lines = cli._get_multi_line_input(
+                    initial_content=initial_content,
+                    start_insert=not exists,
+                    add_open_line=not exists
+                )
+
+                # Filter out blank lines to check if we have actual content
+                has_content = any(l.strip() for l in lines)
+                if has_content:
+                    # Save back to template
+                    with open(template_path, 'w') as f:
+                        f.write("\n".join(lines) + "\n")
+                    items = cli._process_multi_line_input(lines)
+                else:
+                    if os.path.exists(template_path):
+                        os.remove(template_path)
+                    cli.last_msg = "Empty template discarded."
+                    return
+            elif remaining_parts:
                 full_line = " ".join(remaining_parts)
                 items = cli._process_multi_line_input([full_line])
             else:
@@ -1397,10 +1428,16 @@ class FocusCLI:
 
         return [active_items[(c,)] for c in top_level_contents if (c,) in active_items]
 
-    def _get_multi_line_input(self, context_lines=None):
+    def _get_multi_line_input(self, context_lines=None, initial_content=None, start_insert=True, add_open_line=True):
         with tempfile.NamedTemporaryFile(suffix=".txt", mode='w+', delete=False) as tf:
-            tf.write("\n")
-            tf.write("\n\n")
+            if add_open_line:
+                tf.write("\n")
+            if initial_content:
+                if isinstance(initial_content, list):
+                    tf.write("\n".join(l.rstrip() for l in initial_content))
+                else:
+                    tf.write(initial_content.rstrip())
+                tf.write("\n")
             tf.write("# Enter one task or note per line\n")
             if context_lines:
                 for cl in context_lines:
@@ -1408,9 +1445,19 @@ class FocusCLI:
             temp_path = tf.name
 
         try:
-            self._run_with_vi(["+startinsert", temp_path])
+            vi_args = [temp_path]
+            if start_insert:
+                vi_args.insert(0, "+startinsert")
+            self._run_with_vi(vi_args)
             with open(temp_path, 'r') as f:
                 lines = [l.rstrip() for l in f.readlines() if not l.startswith('#')]
+
+            # Strip leading/trailing blank lines from the captured session
+            while lines and not lines[0].strip():
+                lines.pop(0)
+            while lines and not lines[-1].strip():
+                lines.pop()
+
             return lines
         finally:
             if os.path.exists(temp_path):
