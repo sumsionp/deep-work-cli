@@ -757,11 +757,6 @@ class AddCommand(Command):
                     start_insert=not exists,
                     add_open_line=not exists
                 )
-                # Strip leading/trailing blank lines from the captured session
-                while lines and not lines[0].strip():
-                    lines.pop(0)
-                while lines and not lines[-1].strip():
-                    lines.pop()
 
                 # Filter out blank lines to check if we have actual content
                 has_content = any(l.strip() for l in lines)
@@ -796,11 +791,6 @@ class AddCommand(Command):
                         target_task = cli.triage_stack[target_idx]
                         context = [target_task.to_ledger().strip()]
                 lines = cli._get_multi_line_input(context_lines=context)
-                # Filter leading/trailing blank lines for consistency
-                while lines and not lines[0].strip():
-                    lines.pop(0)
-                while lines and not lines[-1].strip():
-                    lines.pop()
                 items = cli._process_multi_line_input(lines)
 
             if not items:
@@ -1461,6 +1451,13 @@ class FocusCLI:
             self._run_with_vi(vi_args)
             with open(temp_path, 'r') as f:
                 lines = [l.rstrip() for l in f.readlines() if not l.startswith('#')]
+
+            # Strip leading/trailing blank lines from the captured session
+            while lines and not lines[0].strip():
+                lines.pop(0)
+            while lines and not lines[-1].strip():
+                lines.pop()
+
             return lines
         finally:
             if os.path.exists(temp_path):

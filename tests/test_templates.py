@@ -157,7 +157,8 @@ class TestTemplates(unittest.TestCase):
         template_path = os.path.join("templates", "clean.txt")
 
         # Cycle 1: Create template
-        mock_input.return_value = ["", "[] Task", ""]
+        # Mock returns stripped lines because _get_multi_line_input now strips them
+        mock_input.return_value = ["[] Task"]
         AddCommand(['n', 'clean']).execute(self.cli)
 
         with open(template_path, 'r') as f:
@@ -165,15 +166,28 @@ class TestTemplates(unittest.TestCase):
         self.assertEqual(content, "[] Task\n")
 
         # Cycle 2: Edit template
-        # The code will load "[] Task\n" and pass it as initial_content
-        # mock_input will simulate user adding a new task and leaving blank lines
-        mock_input.return_value = ["", "[] Task", "[] Task 2", "   ", ""]
+        mock_input.return_value = ["[] Task", "[] Task 2"]
         AddCommand(['n', 'clean']).execute(self.cli)
 
         with open(template_path, 'r') as f:
             content = f.read()
-        # Should still be clean: leading/trailing blank lines stripped, exactly one trailing newline added
+        # Should still be clean: exactly one trailing newline added
         self.assertEqual(content, "[] Task\n[] Task 2\n")
+
+    def test_get_multi_line_input_stripping(self):
+        # We need to mock the file reading part or the vi part to test this
+        # Let's mock _run_with_vi to write some messy content to the temp file
+        def side_effect(args):
+            temp_path = args[-1]
+            with open(temp_path, 'w') as f:
+                f.write("\n\n[] Task 1\n\n[] Task 2\n\n# Comment\n\n")
+
+        self.mock_vi.side_effect = side_effect
+
+        lines = self.cli._get_multi_line_input()
+
+        # Should be stripped of leading/trailing blank lines and comments
+        self.assertEqual(lines, ["[] Task 1", "", "[] Task 2"])
 
 if __name__ == '__main__':
     unittest.main()

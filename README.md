@@ -30,7 +30,7 @@ You can define recurring sets of tasks and notes in template files to add them a
 - **Usage:** Use the add/prioritize commands with a single word (the template name): `n daily`, `N routine`, or `n1 weekly`.
 - **Workflow:**
   1. Typing `n daily` will search for `templates/daily.txt`.
-  2. The content of the template (if it exists) is loaded into `vi`.
+  2. If the template exists, it is loaded into `vi` in command mode. If it's a new template, `vi` opens in insert mode with an empty buffer.
   3. You can edit the tasks for your current session.
   4. Upon saving and exiting (`:wq`), the edited tasks are added to your triage stack, and the template file is updated with your changes.
 - **Cleanup:** If you exit the editor without adding any non-blank/non-comment lines, the template is discarded (and deleted if it existed), and you'll see the message "Empty template discarded."
