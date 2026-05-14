@@ -1436,21 +1436,19 @@ class FocusCLI:
     def _get_multi_line_input(self, context_lines=None, initial_content=None):
         with tempfile.NamedTemporaryFile(suffix=".txt", mode='w+', delete=False) as tf:
             tf.write("\n")
-            tf.write("# Enter one task or note per line\n")
-            if context_lines:
-                for cl in context_lines:
-                    tf.write(f"#{cl}\n")
             if initial_content:
                 if isinstance(initial_content, list):
                     tf.write("\n".join(l.rstrip() for l in initial_content))
                 else:
                     tf.write(initial_content.rstrip())
                 tf.write("\n")
+            tf.write("# Enter one task or note per line\n")
+            if context_lines:
+                for cl in context_lines:
+                    tf.write(f"#{cl}\n")
             temp_path = tf.name
 
         try:
-            # Use +$ to go to the end if we have initial content?
-            # Or just let the user decide. +startinsert is fine.
             self._run_with_vi(["+startinsert", temp_path])
             with open(temp_path, 'r') as f:
                 lines = [l.rstrip() for l in f.readlines() if not l.startswith('#')]
