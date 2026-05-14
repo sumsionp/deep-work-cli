@@ -38,7 +38,7 @@ class TestTemplates(unittest.TestCase):
         self.assertTrue(os.path.exists(template_path))
         with open(template_path, 'r') as f:
             content = f.read()
-        self.assertEqual(content, "[] Task 1\n[] Task 2")
+        self.assertEqual(content, "[] Task 1\n[] Task 2\n")
 
         # Verify tasks were added to triage stack
         self.assertEqual(len(self.cli.triage_stack), 2)
@@ -65,7 +65,7 @@ class TestTemplates(unittest.TestCase):
         # Verify template was updated
         with open(template_path, 'r') as f:
             content = f.read()
-        self.assertEqual(content, "[] Existing Task\n[] New Task")
+        self.assertEqual(content, "[] Existing Task\n[] New Task\n")
 
         # Verify tasks added
         self.assertEqual(len(self.cli.triage_stack), 2)
@@ -147,6 +147,29 @@ class TestTemplates(unittest.TestCase):
 
         self.assertFalse(os.path.exists(os.path.join("templates", "exists.txt")))
         self.assertEqual(self.cli.last_msg, "Empty template discarded.")
+
+    @patch('focuscli.FocusCLI._get_multi_line_input')
+    def test_no_newline_accumulation(self, mock_input):
+        template_path = os.path.join("templates", "clean.txt")
+
+        # Cycle 1: Create template
+        mock_input.return_value = ["", "[] Task", ""]
+        AddCommand(['n', 'clean']).execute(self.cli)
+
+        with open(template_path, 'r') as f:
+            content = f.read()
+        self.assertEqual(content, "[] Task\n")
+
+        # Cycle 2: Edit template
+        # The code will load "[] Task\n" and pass it as initial_content
+        # mock_input will simulate user adding a new task and leaving blank lines
+        mock_input.return_value = ["", "[] Task", "[] Task 2", "   ", ""]
+        AddCommand(['n', 'clean']).execute(self.cli)
+
+        with open(template_path, 'r') as f:
+            content = f.read()
+        # Should still be clean: leading/trailing blank lines stripped, exactly one trailing newline added
+        self.assertEqual(content, "[] Task\n[] Task 2\n")
 
 if __name__ == '__main__':
     unittest.main()

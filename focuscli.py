@@ -752,12 +752,18 @@ class AddCommand(Command):
                         initial_content = f.read()
 
                 lines = cli._get_multi_line_input(initial_content=initial_content)
+                # Strip leading/trailing blank lines from the captured session
+                while lines and not lines[0].strip():
+                    lines.pop(0)
+                while lines and not lines[-1].strip():
+                    lines.pop()
+
                 # Filter out blank lines to check if we have actual content
                 has_content = any(l.strip() for l in lines)
                 if has_content:
                     # Save back to template
                     with open(template_path, 'w') as f:
-                        f.write("\n".join(lines))
+                        f.write("\n".join(lines) + "\n")
                     items = cli._process_multi_line_input(lines)
                 else:
                     if os.path.exists(template_path):
@@ -785,6 +791,11 @@ class AddCommand(Command):
                         target_task = cli.triage_stack[target_idx]
                         context = [target_task.to_ledger().strip()]
                 lines = cli._get_multi_line_input(context_lines=context)
+                # Filter leading/trailing blank lines for consistency
+                while lines and not lines[0].strip():
+                    lines.pop(0)
+                while lines and not lines[-1].strip():
+                    lines.pop()
                 items = cli._process_multi_line_input(lines)
 
             if not items:
@@ -1424,21 +1435,17 @@ class FocusCLI:
 
     def _get_multi_line_input(self, context_lines=None, initial_content=None):
         with tempfile.NamedTemporaryFile(suffix=".txt", mode='w+', delete=False) as tf:
-            if initial_content:
-                if isinstance(initial_content, list):
-                    tf.write("\n".join(initial_content))
-                else:
-                    tf.write(initial_content)
-                if not (isinstance(initial_content, str) and initial_content.endswith('\n')):
-                    tf.write("\n")
-            else:
-                tf.write("\n")
-
-            tf.write("\n\n")
+            tf.write("\n")
             tf.write("# Enter one task or note per line\n")
             if context_lines:
                 for cl in context_lines:
                     tf.write(f"#{cl}\n")
+            if initial_content:
+                if isinstance(initial_content, list):
+                    tf.write("\n".join(l.rstrip() for l in initial_content))
+                else:
+                    tf.write(initial_content.rstrip())
+                tf.write("\n")
             temp_path = tf.name
 
         try:
