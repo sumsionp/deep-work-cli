@@ -1,3 +1,4 @@
+from tests.isolated_test_case import IsolatedTestCase
 import unittest
 from unittest.mock import MagicMock
 import sys
@@ -9,9 +10,11 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from focuscli import FocusCLI, Task, ItemFactory
 
-class TestOneLineAdd(unittest.TestCase):
+class TestOneLineAdd(IsolatedTestCase):
     def setUp(self):
-        self.cli = FocusCLI()
+        super().setUp()
+        super().setUp()
+        self.cli = self.create_cli()
         # Mock ledger to avoid file IO
         self.cli.commit_to_ledger = MagicMock()
         # Mock vi input to avoid terminal hangs

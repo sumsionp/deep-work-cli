@@ -1,3 +1,4 @@
+from tests.isolated_test_case import IsolatedTestCase
 import unittest
 import os
 import shutil
@@ -9,21 +10,14 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from focuscli import FocusCLI
 
-class TestSummary(unittest.TestCase):
+class TestSummary(IsolatedTestCase):
     def setUp(self):
-        self.test_dir = tempfile.mkdtemp()
-        self.old_cwd = os.getcwd()
-        os.chdir(self.test_dir)
-        import focuscli
-        focuscli.FILENAME = "test-plan.txt"
-        self.cli = FocusCLI()
-
-    def tearDown(self):
-        os.chdir(self.old_cwd)
-        shutil.rmtree(self.test_dir)
+        super().setUp()
+        # self.filename is already set by IsolatedTestCase
+        self.cli = self.create_cli()
 
     def test_get_daily_summary_subtasks(self):
-        with open("test-plan.txt", "w") as f:
+        with open(self.filename, "w") as f:
             f.write("[] Task 1\n")
             f.write("  [x] Subtask 1.1\n")
             f.write("  [-] Subtask 1.2\n")
@@ -43,7 +37,7 @@ class TestSummary(unittest.TestCase):
         self.assertEqual(summary['sub']['[-]'], 1)
 
     def test_same_name_different_parents(self):
-        with open("test-plan.txt", "w") as f:
+        with open(self.filename, "w") as f:
             f.write("[] Project A\n")
             f.write("  [x] Review\n")
             f.write("[] Project B\n")
@@ -54,7 +48,7 @@ class TestSummary(unittest.TestCase):
         self.assertEqual(summary['sub']['[-]'], 1)
 
     def test_deferred_subtasks(self):
-        with open("test-plan.txt", "w") as f:
+        with open(self.filename, "w") as f:
             f.write("[] Project C\n")
             f.write("  [>] Deferred Subtask\n")
             f.write("[>] Project C\n")

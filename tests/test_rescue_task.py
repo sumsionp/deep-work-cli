@@ -1,3 +1,4 @@
+from tests.isolated_test_case import IsolatedTestCase
 import unittest
 from unittest.mock import patch
 import os
@@ -11,16 +12,10 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from focuscli import FocusCLI, DATE_FORMAT
 
-class TestRescueTask(unittest.TestCase):
+class TestRescueTask(IsolatedTestCase):
     def setUp(self):
-        self.test_dir = tempfile.mkdtemp()
-        self.old_cwd = os.getcwd()
-        os.chdir(self.test_dir)
-        self.cli = FocusCLI()
-
-    def tearDown(self):
-        os.chdir(self.old_cwd)
-        shutil.rmtree(self.test_dir)
+        super().setUp()
+        self.cli = self.create_cli()
 
     def test_rescue_previous_tasks(self):
         today = datetime.now()
@@ -31,6 +26,10 @@ class TestRescueTask(unittest.TestCase):
         yesterday_file = f"{yesterday_str}-plan.txt"
         today_file = f"{today_str}-plan.txt"
 
+        # IsolatedTestCase already sets sys.argv[1] to self.filename
+        # but for this test we need FILENAME to be the default one based on DATE_FORMAT
+        self.cli.filename = today_file
+
         with open(yesterday_file, 'w') as f:
             f.write("[] Task 1\n")
             f.write("  Note 1\n")
@@ -38,9 +37,7 @@ class TestRescueTask(unittest.TestCase):
             f.write("[x] Completed Task\n")
             f.write("Note alone\n")
 
-        # Mock FILENAME to today's file
-        with patch('focuscli.FILENAME', today_file):
-            self.cli.rescue_previous_tasks()
+        self.cli.rescue_previous_tasks()
 
         # Check if today's file exists and has the rescued task
         self.assertTrue(os.path.exists(today_file))
@@ -69,15 +66,17 @@ class TestRescueTask(unittest.TestCase):
         day2_str = day2.strftime(DATE_FORMAT)
         today_str = today.strftime(DATE_FORMAT)
 
+        today_file = f"{today_str}-plan.txt"
+        self.cli.filename = today_file
+
         with open(f"{day1_str}-plan.txt", 'w') as f:
             f.write("[] Task Day 1\n")
         with open(f"{day2_str}-plan.txt", 'w') as f:
             f.write("[] Task Day 2\n")
 
-        with patch('focuscli.FILENAME', f"{today_str}-plan.txt"):
-            self.cli.rescue_previous_tasks()
+        self.cli.rescue_previous_tasks()
 
-        with open(f"{today_str}-plan.txt", 'r') as f:
+        with open(today_file, 'r') as f:
             content = f.read()
             # Task Day 1 should come before Task Day 2
             idx1 = content.find("Task Day 1")
@@ -93,20 +92,21 @@ class TestRescueTask(unittest.TestCase):
         today_file = f"{today_str}-plan.txt"
         tomorrow_file = f"{tomorrow_str}-plan.txt"
 
+        self.cli.filename = today_file
+
         with open(today_file, 'w') as f:
             f.write("[] Task to defer\n")
 
-        with patch('focuscli.FILENAME', today_file):
-            self.cli.load_context() # To populate triage_stack
+        self.cli.load_context() # To populate triage_stack
 
-            # Defer Task to tomorrow
-            self.cli.handle_command(f"> {tomorrow_str}")
+        # Defer Task to tomorrow
+        self.cli.handle_command(f"> {tomorrow_str}")
 
-            # Check today's file for "Deferred to YYYYMMDD-plan.txt"
-            with open(today_file, 'r') as f:
-                content = f.read()
-                self.assertIn(f"Deferred to {tomorrow_file}", content)
-                self.assertIn("[>] Task to defer", content)
+        # Check today's file for "Deferred to YYYYMMDD-plan.txt"
+        with open(today_file, 'r') as f:
+            content = f.read()
+            self.assertIn(f"Deferred to {tomorrow_file}", content)
+            self.assertIn("[>] Task to defer", content)
 
 if __name__ == '__main__':
     unittest.main()

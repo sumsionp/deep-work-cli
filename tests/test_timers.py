@@ -1,3 +1,4 @@
+from tests.isolated_test_case import IsolatedTestCase
 import unittest
 import time
 import sys
@@ -8,7 +9,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from focuscli import Stopwatch, ThresholdTimer, CountdownTimer
 
-class TestTimers(unittest.TestCase):
+class TestTimers(IsolatedTestCase):
 
     def test_stopwatch(self):
         s = Stopwatch()

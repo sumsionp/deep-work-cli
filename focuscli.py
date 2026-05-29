@@ -17,19 +17,11 @@ from datetime import datetime, timedelta
 
 # --- CONFIG ---
 DATE_FORMAT = '%Y%m%d'
-FILENAME = sys.argv[1] if len(sys.argv) > 1 else datetime.now().strftime(f'{DATE_FORMAT}-plan.txt')
-LOG_FILE = "focus_activity.log"
 DEFAULT_FOCUS_THRESHOLD_MINS = 25
 ALERT_THRESHOLD = DEFAULT_FOCUS_THRESHOLD_MINS * 60
 CHIME_COMMAND = None # Set to a command string like "play /path/to/sound.wav" to override
 MEETING_COLOR = "\033[1;32m" # Green
 OVERLAP_COLOR = "\033[1;31m" # Red
-
-logging.basicConfig(
-    filename=LOG_FILE,
-    level=logging.INFO,
-    format='%(asctime)s | %(levelname)s | %(message)s'
-)
 
 def get_timestamp():
     return datetime.now().strftime('%m/%d/%Y %I:%M:%S %p')
@@ -741,7 +733,7 @@ class AddCommand(Command):
         if remaining_parts is not None:
             if len(remaining_parts) == 1 and not re.search(r'\s', remaining_parts[0]):
                 template_name = os.path.basename(remaining_parts[0])
-                template_dir = "templates"
+                template_dir = cli.templates_dir
                 if not os.path.exists(template_dir):
                     os.makedirs(template_dir)
                 template_path = os.path.join(template_dir, f"{template_name}.txt")
@@ -944,7 +936,7 @@ class DeferCommand(Command):
             def prepare_defer(item):
                 is_target_today = target_date.date() == datetime.now().date()
                 today_str = datetime.now().strftime(DATE_FORMAT)
-                is_current_file_today = today_str in FILENAME
+                is_current_file_today = today_str in cli.filename
 
                 if isinstance(item, Task):
                     target = item.clone_with_state(' ', ' ')
@@ -1200,7 +1192,13 @@ class FocusCLI:
     def triage_stack(self, value): self.stack.populate(value)
 
 
-    def __init__(self):
+    def __init__(self, filename=None, log_file="focus_activity.log", templates_dir="templates"):
+        self.filename = filename if filename else (sys.argv[1] if len(sys.argv) > 1 else datetime.now().strftime(f'{DATE_FORMAT}-plan.txt'))
+        self.log_file = log_file
+        self.templates_dir = templates_dir
+
+        self.setup_logging()
+
         self.mode = "TRIAGE"
         self.stack = TaskStack()
 
@@ -1214,15 +1212,28 @@ class FocusCLI:
         self.last_recorded_focus = None
         self.break_meeting_interrupted = False
 
+    def setup_logging(self):
+        # Clear existing handlers if any
+        root = logging.getLogger()
+        if root.handlers:
+            for handler in root.handlers:
+                root.removeHandler(handler)
+
+        logging.basicConfig(
+            filename=self.log_file,
+            level=logging.INFO,
+            format='%(asctime)s | %(levelname)s | %(message)s'
+        )
+
     def get_daily_summary(self):
         """Returns a dictionary of counts for top-level tasks and subtasks."""
         counts = {
             'top': {'[x]': 0, '[-]': 0, '[>]': 0},
             'sub': {'[x]': 0, '[-]': 0, '[>]': 0}
         }
-        if not os.path.exists(FILENAME): return counts
+        if not os.path.exists(self.filename): return counts
 
-        with open(FILENAME, 'r') as f:
+        with open(self.filename, 'r') as f:
             lines = f.readlines()
 
         latest_states = {} # full_path_key -> (state, is_top)
@@ -1266,10 +1277,10 @@ class FocusCLI:
 
     def enter_free_write(self):
         """Appends Free Write marker, launches vi, reloads context, and sorts the stack."""
-        with open(FILENAME, 'a') as f:
+        with open(self.filename, 'a') as f:
             f.write(f"\n------- Free Write {get_timestamp()} -------\n\n")
 
-        self._run_with_vi(["+$", "+startinsert", FILENAME])
+        self._run_with_vi(["+$", "+startinsert", self.filename])
 
         self.mode = "TRIAGE"
         self.commit_to_ledger("Triage Session Started at", [])
@@ -1287,18 +1298,18 @@ class FocusCLI:
 
 
     def load_context(self):
-        if not os.path.exists(FILENAME):
-            with open(FILENAME, 'w') as f: f.write(f"Session Start - {get_timestamp()}\n")
+        if not os.path.exists(self.filename):
+            with open(self.filename, 'w') as f: f.write(f"Session Start - {get_timestamp()}\n")
             self.triage_stack.populate([])
             return
-        self.triage_stack.populate(self._parse_file(FILENAME))
+        self.triage_stack.populate(self._parse_file(self.filename))
 
 
     def rescue_previous_tasks(self):
         """Scans the last 7 days for pending tasks and defers them to today."""
         # Only rescue if we are using the default daily plan format
         today_str = datetime.now().strftime(DATE_FORMAT)
-        if FILENAME != f"{today_str}-plan.txt":
+        if self.filename != f"{today_str}-plan.txt":
             return
 
         all_rescued_tasks = []
@@ -1319,7 +1330,7 @@ class FocusCLI:
                 if pending_tasks:
                     # Mark as deferred in the old file
                     # Requirement: ------- Deferred to [Target Filename] <Timestamp> -------
-                    label = f"Deferred to {FILENAME}"
+                    label = f"Deferred to {self.filename}"
 
                     # Prepare the deferred version for the old file
                     ledger_items = []
@@ -1818,7 +1829,7 @@ class FocusCLI:
         return new_item
 
     def commit_to_ledger(self, mode_label, items, target_file=None):
-        dest = target_file if target_file else FILENAME
+        dest = target_file if target_file else self.filename
         with open(dest, 'a') as f:
             f.write(f"\n------- {mode_label} {get_timestamp()} -------\n")
             if items:
@@ -1968,7 +1979,7 @@ class FocusCLI:
             fm, fs = divmod(abs(int(focus_remaining)), 60)
             f_color = "\033[1;31m" if focus_remaining <= 0 else ""
             timer_str = f" | Focus: {f_color}{f_sign}{fm:02d}:{fs:02d}\033[0m"
-            sys.stdout.write("\033[1;1H" + f"\033[K--- TRIAGE: {os.path.basename(FILENAME)}{timer_str} ---")
+            sys.stdout.write("\033[1;1H" + f"\033[K--- TRIAGE: {os.path.basename(self.filename)}{timer_str} ---")
         elif self.mode == "FOCUS":
             if not self.triage_stack: return
             if not self.timers.task_timer.is_active: self.timers.task_timer.start(now)
@@ -2065,7 +2076,7 @@ class FocusCLI:
             if self.original_termios: termios.tcsetattr(fd, termios.TCSADRAIN, self.original_termios)
             sys.exit(0)
         signal.signal(signal.SIGTERM, signal_handler)
-        if not os.path.exists(FILENAME): self.rescue_previous_tasks()
+        if not os.path.exists(self.filename): self.rescue_previous_tasks()
         self.enter_free_write()
         try:
             tty.setcbreak(fd)
@@ -2150,7 +2161,7 @@ class FocusCLI:
         f_sign = "-" if focus_remaining < 0 else ""; fm, fs = divmod(abs(int(focus_remaining)), 60)
         f_color = "\033[1;31m" if focus_remaining <= 0 else ""
         timer_str = f" | Focus: {f_color}{f_sign}{fm:02d}:{fs:02d}\033[0m"
-        print(f"--- TRIAGE: {os.path.basename(FILENAME)}{timer_str} ---")
+        print(f"--- TRIAGE: {os.path.basename(self.filename)}{timer_str} ---")
         meetings = []
         for i, item in enumerate(self.triage_stack):
             if isinstance(item, Meeting) and item.start_time and item.end_time:
@@ -2180,7 +2191,7 @@ class FocusCLI:
 
     def render_exit(self):
         summary = self.get_daily_summary()
-        print(f"\n\033[1;32mDAILY SCORECARD ({os.path.basename(FILENAME)})\033[0m")
+        print(f"\n\033[1;32mDAILY SCORECARD ({os.path.basename(self.filename)})\033[0m")
         print(f"  Finished  [x]: {summary['top']['[x]'] + summary['sub']['[x]']}")
         print(f"    - Top-level: {summary['top']['[x]']}")
         print(f"    - Subtasks:  {summary['sub']['[x]']}")

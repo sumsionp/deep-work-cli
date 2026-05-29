@@ -1,3 +1,4 @@
+from tests.isolated_test_case import IsolatedTestCase
 import unittest
 from unittest.mock import MagicMock, patch
 import os
@@ -8,10 +9,12 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from focuscli import FocusCLI, TriageCommand, AddCommand, Task, Note
 
-class TestCommandsExecution(unittest.TestCase):
+class TestCommandsExecution(IsolatedTestCase):
     def setUp(self):
-        with patch('focuscli.FILENAME', 'test-plan.txt'):
-            self.cli = FocusCLI()
+        super().setUp()
+        super().setUp()
+        if True: # Patched FILENAME removed
+            self.cli = self.create_cli()
         self.cli.commit_to_ledger = MagicMock()
         self.cli._process_multi_line_input = MagicMock()
         self.cli._get_multi_line_input = MagicMock(return_value=[])
