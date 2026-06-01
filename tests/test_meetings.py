@@ -1,3 +1,4 @@
+from tests.isolated_test_case import IsolatedTestCase
 import unittest
 from unittest.mock import MagicMock, patch
 from datetime import datetime, timedelta
@@ -10,11 +11,12 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from focuscli import FocusCLI, Meeting, Break, ItemFactory
 
-class TestMeetingInterruption(unittest.TestCase):
+class TestMeetingInterruption(IsolatedTestCase):
     def setUp(self):
+        super().setUp()
         # Mock FILENAME to avoid creating real files during tests
-        with patch('focuscli.FILENAME', 'test-plan.txt'):
-            self.cli = FocusCLI()
+        if True: # Patched FILENAME removed
+            self.cli = self.create_cli()
 
         # Mock dependencies to avoid side effects
         self.cli.play_chime = MagicMock()

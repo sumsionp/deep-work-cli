@@ -1,3 +1,4 @@
+from tests.isolated_test_case import IsolatedTestCase
 import unittest
 import copy
 import os
@@ -8,9 +9,10 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from focuscli import FocusCLI, ItemFactory
 
-class TestHierarchicalAdd(unittest.TestCase):
+class TestHierarchicalAdd(IsolatedTestCase):
     def setUp(self):
-        self.cli = FocusCLI()
+        super().setUp()
+        self.cli = self.create_cli()
         # Mock ledger to avoid file IO
         self.cli.commit_to_ledger = lambda label, items: None
 

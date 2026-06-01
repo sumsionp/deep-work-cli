@@ -1,3 +1,4 @@
+from tests.isolated_test_case import IsolatedTestCase
 import unittest
 from unittest.mock import MagicMock, patch
 from datetime import datetime, timedelta
@@ -9,10 +10,11 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from focuscli import FocusCLI, DeferCommand, Task, Meeting, Break
 
-class TestTargetedDeferral(unittest.TestCase):
+class TestTargetedDeferral(IsolatedTestCase):
     def setUp(self):
-        with patch('focuscli.FILENAME', 'test-plan.txt'):
-            self.cli = FocusCLI()
+        super().setUp()
+        if True: # Patched FILENAME removed
+            self.cli = self.create_cli()
         self.cli.commit_to_ledger = MagicMock()
 
     def test_defer_task_to_index(self):

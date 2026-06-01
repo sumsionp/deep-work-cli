@@ -1,3 +1,4 @@
+from tests.isolated_test_case import IsolatedTestCase
 import unittest
 import os
 import sys
@@ -8,7 +9,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from focuscli import Item, Task, Meeting, Break, Note, Header, ItemFactory
 
-class TestArchitecture(unittest.TestCase):
+class TestArchitecture(IsolatedTestCase):
 
     def test_tree_construction_from_lines(self):
         """Item.from_lines should correctly build a nested hierarchy."""

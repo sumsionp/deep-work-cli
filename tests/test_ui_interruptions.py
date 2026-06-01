@@ -1,3 +1,4 @@
+from tests.isolated_test_case import IsolatedTestCase
 import unittest
 from unittest.mock import MagicMock, patch
 from datetime import datetime, timedelta
@@ -13,9 +14,10 @@ os.environ['FOCUS_FILENAME'] = 'test-plan.txt'
 
 from focuscli import FocusCLI, ItemFactory
 
-class TestMeetingInterruption(unittest.TestCase):
+class TestMeetingInterruption(IsolatedTestCase):
     def setUp(self):
-        self.cli = FocusCLI()
+        super().setUp()
+        self.cli = self.create_cli()
         # Mock dependencies to avoid side effects
         self.cli.play_chime = MagicMock()
         self.cli.commit_to_ledger = MagicMock()

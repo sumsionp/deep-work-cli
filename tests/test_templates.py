@@ -1,3 +1,4 @@
+from tests.isolated_test_case import IsolatedTestCase
 import unittest
 import os
 import sys
@@ -10,20 +11,17 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from focuscli import FocusCLI, Task, TaskStack, AddCommand
 
-class TestTemplates(unittest.TestCase):
+class TestTemplates(IsolatedTestCase):
     def setUp(self):
-        self.test_dir = tempfile.mkdtemp()
-        self.old_cwd = os.getcwd()
-        os.chdir(self.test_dir)
-        self.cli = FocusCLI()
+        super().setUp()
+        self.cli = self.create_cli()
         # Mock _run_with_vi to avoid opening actual vi
-        self.vi_patcher = patch.object(FocusCLI, '_run_with_vi')
+        self.vi_patcher = patch('focuscli.FocusCLI._run_with_vi')
         self.mock_vi = self.vi_patcher.start()
 
     def tearDown(self):
         self.vi_patcher.stop()
-        os.chdir(self.old_cwd)
-        shutil.rmtree(self.test_dir)
+        super().tearDown()
 
     @patch('focuscli.FocusCLI._get_multi_line_input')
     def test_add_new_template(self, mock_input):
@@ -126,8 +124,8 @@ class TestTemplates(unittest.TestCase):
         cmd.execute(self.cli)
 
         # Verify template was created in the templates directory, NOT the parent
-        self.assertFalse(os.path.exists(os.path.join(self.test_dir, "dangerous.txt")))
-        self.assertTrue(os.path.exists(os.path.join(self.test_dir, "templates", "dangerous.txt")))
+        self.assertFalse(os.path.exists("../dangerous.txt"))
+        self.assertTrue(os.path.exists(os.path.join("templates", "dangerous.txt")))
 
     @patch('focuscli.FocusCLI._get_multi_line_input')
     def test_discard_empty_template(self, mock_input):

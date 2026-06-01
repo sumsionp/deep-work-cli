@@ -1,3 +1,4 @@
+from tests.isolated_test_case import IsolatedTestCase
 import unittest
 import os
 import sys
@@ -7,10 +8,11 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from focuscli import CommandParser, QuitCommand, AddCommand, ResolveCommand
 
-class TestCommandParser(unittest.TestCase):
+class TestCommandParser(IsolatedTestCase):
     def setUp(self):
+        super().setUp()
         from focuscli import FocusCLI
-        self.cli = FocusCLI()
+        self.cli = self.create_cli()
 
     def test_basic_parsing(self):
         cmd = CommandParser.parse(self.cli, "q", "TRIAGE")

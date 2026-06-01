@@ -1,3 +1,4 @@
+from tests.isolated_test_case import IsolatedTestCase
 import unittest
 import os
 import sys
@@ -9,9 +10,10 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from focuscli import FocusCLI, ItemFactory
 
-class TestCommandSwap(unittest.TestCase):
+class TestCommandSwap(IsolatedTestCase):
     def setUp(self):
-        self.cli = FocusCLI()
+        super().setUp()
+        self.cli = self.create_cli()
         # Mock ledger and vi to avoid side effects
         self.cli.commit_to_ledger = lambda label, items, target_file=None: None
         self.cli._run_with_vi = lambda args: None

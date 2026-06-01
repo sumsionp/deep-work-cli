@@ -1,3 +1,4 @@
+from tests.isolated_test_case import IsolatedTestCase
 import unittest
 from datetime import datetime, timedelta
 import os
@@ -8,7 +9,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from focuscli import TaskStack, Task, Meeting, Note
 
-class TestNewTaskStack(unittest.TestCase):
+class TestNewTaskStack(IsolatedTestCase):
     def test_stack_partitioning(self):
         now = datetime.now()
         task = Task("Normal Task")
