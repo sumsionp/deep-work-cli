@@ -19,7 +19,7 @@
 - **Task Timer vs Focus Timer:** Individual task tracking alongside overall session tracking.
 - **Auditory Feedback:** System chimes for focus limits and break expirations.
 - **Flexible Focus Duration:** The `f` command to adjust focus thresholds on the fly.
-- **Meeting Support:** Time-aware tasks with auto-preemption and meeting timer.
+- **Meeting Support:** Time-aware tasks with auditory alerts and meeting timer.
 - **Task Editing ('e'):** Drop to `vi` from Triage or Focus mode to edit items.
 - **Mini Task Session (m#):** Implement a manual-reset repeating timer for rapid completion of small focus items.
 - **Automatic Hierarchical Focus:** Automatically drill down into subtasks and sub-sub-tasks, focusing on the deepest pending items one at a time.

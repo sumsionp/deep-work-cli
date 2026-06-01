@@ -10,13 +10,14 @@ This program acts as a "lens" for a chronological journal stored in a plain text
 
 ## Syntax & Hierarchy
 - **Tasks:** Lines starting with `[]`, `[ ]`, `[x]`, `[-]`, `[>]`, or `[e]`.
+- **Scheduled Breaks:** Lines starting with `[B]`. These are time-aware tasks (meetings) that automatically enter Break Mode when focused.
 - **Notes:** Any line that isn't a task.
 - **Hierarchy:** Two leading spaces indicate a child relationship (subtask or note) to the task above.
 - **Multi-line Grouping:** When adding tasks via `n` or `N`, the parser uses indentation to group items. Any line indented more than the preceding line is automatically treated as a sub-item (note or subtask) of that parent, ensuring that a new task and its subtasks are added to the stack as a single unit.
 - **Adding Already Completed Tasks** Already completed tasks can be added for a record in the ledger. These are entered prepended with `[x]` or any other completed marker. These are added to the ledger, but not to the triage stack.
 
 ### Meeting Support
-Tasks can be time-aware by including a time block. Meetings automatically preempt the current task when their start time arrives.
+Tasks can be time-aware by including a time block. When a meeting's start time arrives, the system chimes and displays an alert in the status bar every 15 seconds to remind you to switch focus.
 Supported formats:
 - `2:00-3:00 PM`
 - `2-3 PM`

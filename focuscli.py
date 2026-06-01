@@ -1905,11 +1905,6 @@ class FocusCLI:
                 break_item.end_time = break_item.start_time + timedelta(minutes=5)
             self.mode = "BREAK"
 
-        # 1. Automatic takeover for scheduled break meetings [B]
-        due_meeting = self.stack.check_for_due_meetings()
-        if due_meeting and isinstance(due_meeting, Break) and due_meeting.state == 'B':
-             self.stack.promote_due_meetings()
-
         # 2. Initial "Meeting Starting" chime (for focused OR due meetings)
         all_active_meetings = [m for m in self.triage_stack if isinstance(m, Meeting) and m.is_active(now=now)]
         for m in all_active_meetings:
