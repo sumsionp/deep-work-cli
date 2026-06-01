@@ -13,7 +13,6 @@ from focuscli import FocusCLI, Task, ItemFactory
 class TestOneLineAdd(IsolatedTestCase):
     def setUp(self):
         super().setUp()
-        super().setUp()
         self.cli = self.create_cli()
         # Mock ledger to avoid file IO
         self.cli.commit_to_ledger = MagicMock()

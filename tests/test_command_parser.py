@@ -11,7 +11,6 @@ from focuscli import CommandParser, QuitCommand, AddCommand, ResolveCommand
 class TestCommandParser(IsolatedTestCase):
     def setUp(self):
         super().setUp()
-        super().setUp()
         from focuscli import FocusCLI
         self.cli = self.create_cli()
 

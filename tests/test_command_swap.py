@@ -13,7 +13,6 @@ from focuscli import FocusCLI, ItemFactory
 class TestCommandSwap(IsolatedTestCase):
     def setUp(self):
         super().setUp()
-        super().setUp()
         self.cli = self.create_cli()
         # Mock ledger and vi to avoid side effects
         self.cli.commit_to_ledger = lambda label, items, target_file=None: None

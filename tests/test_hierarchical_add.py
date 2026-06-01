@@ -12,7 +12,6 @@ from focuscli import FocusCLI, ItemFactory
 class TestHierarchicalAdd(IsolatedTestCase):
     def setUp(self):
         super().setUp()
-        super().setUp()
         self.cli = self.create_cli()
         # Mock ledger to avoid file IO
         self.cli.commit_to_ledger = lambda label, items: None

@@ -1215,9 +1215,9 @@ class FocusCLI:
     def setup_logging(self):
         # Clear existing handlers if any
         root = logging.getLogger()
-        if root.handlers:
-            for handler in root.handlers:
-                root.removeHandler(handler)
+        for handler in root.handlers[:]:
+            root.removeHandler(handler)
+            handler.close()
 
         logging.basicConfig(
             filename=self.log_file,

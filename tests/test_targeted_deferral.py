@@ -13,7 +13,6 @@ from focuscli import FocusCLI, DeferCommand, Task, Meeting, Break
 class TestTargetedDeferral(IsolatedTestCase):
     def setUp(self):
         super().setUp()
-        super().setUp()
         if True: # Patched FILENAME removed
             self.cli = self.create_cli()
         self.cli.commit_to_ledger = MagicMock()

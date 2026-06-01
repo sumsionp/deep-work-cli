@@ -15,7 +15,6 @@ class TestBreak(IsolatedTestCase):
 
     def setUp(self):
         super().setUp()
-        super().setUp()
         # Mock FILENAME to avoid creating real files during tests
         if True: # Patched FILENAME removed
             self.cli = self.create_cli()

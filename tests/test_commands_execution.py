@@ -12,7 +12,6 @@ from focuscli import FocusCLI, TriageCommand, AddCommand, Task, Note
 class TestCommandsExecution(IsolatedTestCase):
     def setUp(self):
         super().setUp()
-        super().setUp()
         if True: # Patched FILENAME removed
             self.cli = self.create_cli()
         self.cli.commit_to_ledger = MagicMock()

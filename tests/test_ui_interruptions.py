@@ -17,7 +17,6 @@ from focuscli import FocusCLI, ItemFactory
 class TestMeetingInterruption(IsolatedTestCase):
     def setUp(self):
         super().setUp()
-        super().setUp()
         self.cli = self.create_cli()
         # Mock dependencies to avoid side effects
         self.cli.play_chime = MagicMock()
