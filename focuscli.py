@@ -878,7 +878,7 @@ class ResolveCommand(Command):
                 cli.mode = "EXIT"
                 return "REDRAW"
 
-            is_break_obj = cli.triage_stack and isinstance(cli.triage_stack[0], Break)
+            is_break_obj = isinstance(resolved_item, Break)
             if cli.mode == "BREAK" and is_break_obj:
                 cli._transition_from_break_to_focus(break_item=resolved_item)
                 return "REDRAW"
@@ -1105,7 +1105,7 @@ class IgnoreCommand(Command):
                     resolved_item = item.clone_with_state('-', '-')
                     cli.commit_to_ledger("Cancelled", [resolved_item])
         elif cli.mode in ["FOCUS", "BREAK"]:
-            return ResolutionCommand(self.parts).execute(cli)
+            return ResolveCommand(self.parts).execute(cli)
 
 
 class CommandParser:
