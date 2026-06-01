@@ -322,8 +322,10 @@ class Meeting(Task):
 
         # Handle crossing midnight if the time is earlier than the reference date
         dt = reference_date.replace(hour=h, minute=m, second=0, microsecond=0)
-        if dt < reference_date - timedelta(hours=6):
+        if dt < reference_date - timedelta(hours=10):
              dt += timedelta(days=1)
+        elif dt > reference_date + timedelta(hours=14):
+             dt -= timedelta(days=1)
         return dt
 
     def is_active(self, now=None):
@@ -1843,6 +1845,12 @@ class FocusCLI:
             if self.timers.mini_timer.should_chime(interval_seconds=30):
                 self.play_chime(sound='tick')
 
+    def play_session_chime(self, sound='chime'):
+        """Plays a chime and updates the last_chime_timestamp to prevent redundant alerts."""
+        if self.timers.should_chime(interval_seconds=0): # Always true if we just want to play it
+             self.play_chime(sound=sound)
+             self.timers.last_chime_timestamp = time.time()
+
     def play_chime(self, sound='chime'):
         if CHIME_COMMAND:
             subprocess.Popen(shlex.split(CHIME_COMMAND), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -1880,7 +1888,7 @@ class FocusCLI:
 
             if remaining <= 0 or self.break_meeting_interrupted:
                 if self.timers.should_chime(interval_seconds=60):
-                    self.play_chime()
+                    self.play_session_chime()
                     if remaining <= 0:
                         self.last_msg = "!! BREAK EXPIRED !!"
         elif self.mode in ["FOCUS", "TRIAGE"]:
@@ -1890,20 +1898,22 @@ class FocusCLI:
             if self.timers.focus_timer.is_exceeded():
                 if self.timers.should_chime(interval_seconds=60):
                     if not is_meeting:
-                        self.play_chime()
+                        self.play_session_chime()
 
 
     def check_meetings(self):
         if self.mode not in ["FOCUS", "BREAK"]: return
         if not self.triage_stack: return
         now = datetime.now()
-        if self.mode in ["FOCUS", "BREAK"] and isinstance(self.triage_stack[0], Break):
-            break_item = self.triage_stack[0]
-            if not break_item.end_time:
-                break_item.start_time = datetime.now()
-                break_item.duration = 5
-                break_item.end_time = break_item.start_time + timedelta(minutes=5)
-            self.mode = "BREAK"
+        top_item = self.triage_stack[0]
+        if isinstance(top_item, Break):
+            if not top_item.end_time:
+                top_item.start_time = datetime.now()
+                top_item.duration = 5
+                top_item.end_time = top_item.start_time + timedelta(minutes=5)
+            if self.mode != "BREAK":
+                self.mode = "BREAK"
+                self.last_msg = f"Break Meeting Started: {top_item.content}"
 
         # 2. Initial "Meeting Starting" chime (for focused OR due meetings)
         all_active_meetings = [m for m in self.triage_stack if isinstance(m, Meeting) and m.is_active(now=now)]
@@ -1913,7 +1923,7 @@ class FocusCLI:
              if meeting_id not in self.chimed_meetings:
                  if self.mode == "BREAK" and not isinstance(m, Break):
                      self.break_meeting_interrupted = True
-                 self.play_chime()
+                 self.play_session_chime()
                  self.chimed_meetings.add(meeting_id)
                  self.timers.chimer.load(m.content)
                  self.last_msg = f"Meeting Starting: {m.content}"
@@ -1927,7 +1937,7 @@ class FocusCLI:
                  self.timers.chimer.load(due_meeting.content)
 
             if self.timers.chimer.should_chime(interval_seconds=15):
-                self.play_chime()
+                self.play_session_chime()
         else:
              # If no due meeting is in timeline, focused meetings should NOT trigger reminders
              top_item = self.triage_stack[0]
@@ -1935,11 +1945,6 @@ class FocusCLI:
                   if self.timers.chimer.meeting_name == top_item.content:
                        self.timers.chimer.stop()
 
-        # 4. Mode transition for started break meetings
-        if isinstance(self.triage_stack[0], Break) and self.triage_stack[0].is_active():
-            if self.mode != "BREAK":
-                self.mode = "BREAK"
-                self.last_msg = f"Break Meeting Started: {self.triage_stack[0].content}"
 
 
     def render_break(self):
