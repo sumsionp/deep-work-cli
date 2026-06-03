@@ -1140,18 +1140,26 @@ class CommandParser:
     def parse(cli, cmd_string, mode):
         # Split symbol commands from their numeric arguments (e.g., >1, n5, x2)
         cmd_clean = re.sub(r'^(>>|>|[a-zA-Z]|[-x])(-?\d+)', r'\1 \2', cmd_string)
+
+        def safe_split(s):
+            lex = shlex.shlex(s, posix=True)
+            lex.quotes = '"'
+            lex.whitespace_split = True
+            lex.commenters = ''
+            return list(lex)
+
         try:
-            parts = shlex.split(cmd_clean)
+            parts = safe_split(cmd_clean)
         except ValueError:
             if '"' in cmd_clean:
                 try:
-                    parts = shlex.split(cmd_clean + '"')
+                    parts = safe_split(cmd_clean + '"')
                     cli.last_msg = "Note: Added missing closing quote."
                 except ValueError:
                     cli.last_msg = "Error: Unbalanced quotes."
                     return None
             else:
-                parts = cmd_string.split()
+                parts = cmd_clean.split()
 
         if not parts:
             return None
