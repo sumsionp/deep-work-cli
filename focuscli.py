@@ -213,6 +213,24 @@ class Meeting(Task):
             child.parent = new_task
         return new_task
 
+    def clone_with_state(self, main_state, pending_sub_state):
+        """Override to handle the [B] marker specifically, ensuring it's treated as a pending state."""
+        # Normalize state so Task.clone_with_state recognizes it as pending
+        original_state = self.state
+        if self.state == 'B':
+            self.state = ' '
+
+        try:
+            new_item = super().clone_with_state(main_state, pending_sub_state)
+        finally:
+            self.state = original_state # Restore
+
+        return new_item
+
+
+
+
+
     def reschedule(self, time_str):
         """Updates meeting time attributes based on a time string."""
         # Use our existing parsing logic which is robust
@@ -347,6 +365,20 @@ class Break(Meeting):
         for child in new_task.children:
             child.parent = new_task
         return new_task
+
+    def clone_with_state(self, main_state, pending_sub_state):
+        """Override to handle the [B] marker specifically, ensuring it's treated as a pending state."""
+        # Task.clone_with_state creates a deep copy first, then updates it
+        new_item = super().clone_with_state(main_state, pending_sub_state)
+        # If the state was successfully updated from 'B' to the resolution marker, return it
+        if new_item.state == main_state:
+             return new_item
+
+        # Otherwise, Task.clone_with_state didn't know how to handle 'B'
+        if new_item.state == 'B':
+             new_item.state = main_state
+
+        return new_item
 
     @classmethod
     def from_line(cls, line, indent=0):
@@ -555,7 +587,7 @@ class TimerManager:
 
     def should_chime(self, interval_seconds=60, update_timestamp=True):
         now = time.time()
-        if self.last_chime_timestamp == 0 or now - self.last_chime_timestamp >= interval_seconds:
+        if now - self.last_chime_timestamp >= interval_seconds:
             if update_timestamp:
                 self.last_chime_timestamp = now
             return True
@@ -1910,6 +1942,11 @@ class FocusCLI:
                 top_item.start_time = datetime.now()
                 top_item.duration = 5
                 top_item.end_time = top_item.start_time + timedelta(minutes=5)
+                # Suppress chime for auto-initialized breaks at the top of the stack
+                state_str = top_item.state if top_item.state.strip() else ''
+                meeting_id = f"[{state_str}] {top_item.content}_{top_item.start_time}"
+                self.chimed_meetings.add(meeting_id)
+
             if self.mode != "BREAK":
                 self.mode = "BREAK"
                 self.last_msg = f"Break Meeting Started: {top_item.content}"
@@ -2112,11 +2149,11 @@ class FocusCLI:
                 elif current_second != last_render_second:
                     if self.mode in ["FOCUS", "BREAK", "TRIAGE"]: self.update_timer_ui()
                     last_render_second = current_second
-                if self.mode in ["FOCUS", "BREAK", "TRIAGE"]: self.check_chime()
                 if self.mode in ["FOCUS", "BREAK"]:
                     self.timers.update(self.mode)
                     self.check_meetings()
                     if self.mode == "FOCUS": self.update_mini_timer()
+                if self.mode in ["FOCUS", "BREAK", "TRIAGE"]: self.check_chime()
                 rlist, _, _ = select.select([fd], [], [], 0.1)
                 if rlist:
                     char = self._read_keypress(fd)
