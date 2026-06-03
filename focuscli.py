@@ -204,32 +204,23 @@ class Meeting(Task):
         self.end_time = end_time
         self.duration = duration
 
-    def to_task(self):
-        """Converts this meeting to a regular Task, stripping time patterns."""
+    def get_meeting_id(self):
+        """Returns a unique identifier for this meeting instance based on content and time."""
+        state_str = self.state if self.state.strip() else ''
+        return f"[{state_str}] {self.content}_{self.start_time}"
+
+    def _clone_to_task(self, target_state):
+        """Internal helper to clone a meeting/break into a Task."""
         new_content = strip_meeting_time(self.content)
-        new_task = Task(new_content, self.indent, self.state)
+        new_task = Task(new_content, self.indent, target_state)
         new_task.children = copy.deepcopy(self.children)
         for child in new_task.children:
             child.parent = new_task
         return new_task
 
-    def clone_with_state(self, main_state, pending_sub_state):
-        """Override to handle the [B] marker specifically, ensuring it's treated as a pending state."""
-        # Normalize state so Task.clone_with_state recognizes it as pending
-        original_state = self.state
-        if self.state == 'B':
-            self.state = ' '
-
-        try:
-            new_item = super().clone_with_state(main_state, pending_sub_state)
-        finally:
-            self.state = original_state # Restore
-
-        return new_item
-
-
-
-
+    def to_task(self):
+        """Converts this meeting to a regular Task, stripping time patterns."""
+        return self._clone_to_task(self.state)
 
     def reschedule(self, time_str):
         """Updates meeting time attributes based on a time string."""
@@ -359,12 +350,7 @@ class Break(Meeting):
 
     def to_task(self):
         """Converts this break to a regular Task, stripping time patterns."""
-        new_content = strip_meeting_time(self.content)
-        new_task = Task(new_content, self.indent, ' ') # Break -> Task uses [ ]
-        new_task.children = copy.deepcopy(self.children)
-        for child in new_task.children:
-            child.parent = new_task
-        return new_task
+        return self._clone_to_task(' ') # Break -> Task uses [ ]
 
     def clone_with_state(self, main_state, pending_sub_state):
         """Override to handle the [B] marker specifically, ensuring it's treated as a pending state."""
@@ -384,9 +370,13 @@ class Break(Meeting):
     def from_line(cls, line, indent=0):
         state, content = cls._parse_common(line)
         if content:
-            m_time = cls.parse_meeting_time(content)
-            start, end, duration = m_time if m_time else (None, None, None)
-            return cls(content, indent, state, start, end, duration)
+            # First try parent Meeting parser
+            meeting = super().from_line(line, indent)
+            if meeting:
+                 return cls(content, indent, state, meeting.start_time, meeting.end_time, meeting.duration)
+
+            # If no time schedule, return uninitialized Break object
+            return cls(content, indent, state)
         return None
 
     BREAK_QUOTES = [
@@ -1782,9 +1772,7 @@ class FocusCLI:
         self.triage_stack.insert(0, break_item)
 
         # Add to chimed_meetings to prevent redundant chime for manual breaks
-        state_str = break_item.state if break_item.state.strip() else ''
-        meeting_id = f"[{state_str}] {break_item.content}_{break_item.start_time}"
-        self.chimed_meetings.add(meeting_id)
+        self.chimed_meetings.add(break_item.get_meeting_id())
 
         self.mode = "BREAK"
         self.break_meeting_interrupted = False
@@ -1943,9 +1931,7 @@ class FocusCLI:
                 top_item.duration = 5
                 top_item.end_time = top_item.start_time + timedelta(minutes=5)
                 # Suppress chime for auto-initialized breaks at the top of the stack
-                state_str = top_item.state if top_item.state.strip() else ''
-                meeting_id = f"[{state_str}] {top_item.content}_{top_item.start_time}"
-                self.chimed_meetings.add(meeting_id)
+                self.chimed_meetings.add(top_item.get_meeting_id())
 
             if self.mode != "BREAK":
                 self.mode = "BREAK"
@@ -1954,8 +1940,7 @@ class FocusCLI:
         # 2. Initial "Meeting Starting" chime (for focused OR due meetings)
         all_active_meetings = [m for m in self.triage_stack if isinstance(m, Meeting) and m.is_active(now=now)]
         for m in all_active_meetings:
-             state_str = m.state if m.state.strip() else ''
-             meeting_id = f"[{state_str}] {m.content}_{m.start_time}"
+             meeting_id = m.get_meeting_id()
              if meeting_id not in self.chimed_meetings:
                  if self.mode == "BREAK" and not isinstance(m, Break):
                      self.break_meeting_interrupted = True
