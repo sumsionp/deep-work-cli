@@ -26,8 +26,6 @@ class TestBreakPersistence(IsolatedTestCase):
         with open(self.filename, 'r') as f:
             ledger_content = f.read()
 
-        print(f"Ledger content:\n{ledger_content}")
-
         # It should contain [x] Break to complete
         self.assertIn("[x] Break to complete", ledger_content)
         # It should NOT contain [B] Break to complete in the most recent section
