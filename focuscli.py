@@ -204,14 +204,23 @@ class Meeting(Task):
         self.end_time = end_time
         self.duration = duration
 
-    def to_task(self):
-        """Converts this meeting to a regular Task, stripping time patterns."""
+    def get_meeting_id(self):
+        """Returns a unique identifier for this meeting instance based on content and time."""
+        state_str = self.state if self.state.strip() else ''
+        return f"[{state_str}] {self.content}_{self.start_time}"
+
+    def _clone_to_task(self, target_state):
+        """Internal helper to clone a meeting/break into a Task."""
         new_content = strip_meeting_time(self.content)
-        new_task = Task(new_content, self.indent, self.state)
+        new_task = Task(new_content, self.indent, target_state)
         new_task.children = copy.deepcopy(self.children)
         for child in new_task.children:
             child.parent = new_task
         return new_task
+
+    def to_task(self):
+        """Converts this meeting to a regular Task, stripping time patterns."""
+        return self._clone_to_task(self.state)
 
     def reschedule(self, time_str):
         """Updates meeting time attributes based on a time string."""
@@ -322,8 +331,10 @@ class Meeting(Task):
 
         # Handle crossing midnight if the time is earlier than the reference date
         dt = reference_date.replace(hour=h, minute=m, second=0, microsecond=0)
-        if dt < reference_date - timedelta(hours=6):
+        if dt < reference_date - timedelta(hours=10):
              dt += timedelta(days=1)
+        elif dt > reference_date + timedelta(hours=14):
+             dt -= timedelta(days=1)
         return dt
 
     def is_active(self, now=None):
@@ -339,20 +350,33 @@ class Break(Meeting):
 
     def to_task(self):
         """Converts this break to a regular Task, stripping time patterns."""
-        new_content = strip_meeting_time(self.content)
-        new_task = Task(new_content, self.indent, ' ') # Break -> Task uses [ ]
-        new_task.children = copy.deepcopy(self.children)
-        for child in new_task.children:
-            child.parent = new_task
-        return new_task
+        return self._clone_to_task(' ') # Break -> Task uses [ ]
+
+    def clone_with_state(self, main_state, pending_sub_state):
+        """Override to handle the [B] marker specifically, ensuring it's treated as a pending state."""
+        # Task.clone_with_state creates a deep copy first, then updates it
+        new_item = super().clone_with_state(main_state, pending_sub_state)
+        # If the state was successfully updated from 'B' to the resolution marker, return it
+        if new_item.state == main_state:
+             return new_item
+
+        # Otherwise, Task.clone_with_state didn't know how to handle 'B'
+        if new_item.state == 'B':
+             new_item.state = main_state
+
+        return new_item
 
     @classmethod
     def from_line(cls, line, indent=0):
         state, content = cls._parse_common(line)
         if content:
-            m_time = cls.parse_meeting_time(content)
-            start, end, duration = m_time if m_time else (None, None, None)
-            return cls(content, indent, state, start, end, duration)
+            # First try parent Meeting parser
+            meeting = super().from_line(line, indent)
+            if meeting:
+                 return cls(content, indent, state, meeting.start_time, meeting.end_time, meeting.duration)
+
+            # If no time schedule, return uninitialized Break object
+            return cls(content, indent, state)
         return None
 
     BREAK_QUOTES = [
@@ -551,15 +575,19 @@ class TimerManager:
         elif mode == "BREAK":
             self.chimer.tick()
 
-    def should_chime(self, interval_seconds=60):
+    def should_chime(self, interval_seconds=60, update_timestamp=True):
         now = time.time()
         if now - self.last_chime_timestamp >= interval_seconds:
-            self.last_chime_timestamp = now
+            if update_timestamp:
+                self.last_chime_timestamp = now
             return True
         return False
 
-    def reset_chime(self):
-        self.last_chime_timestamp = 0
+    def reset_chime(self, offset=0):
+        if offset == 0:
+            self.last_chime_timestamp = 0
+        else:
+            self.last_chime_timestamp = time.time() - offset
 
 
 
@@ -828,7 +856,6 @@ class FocusCommand(Command):
             cli.last_msg = ""
             if cli.timers.mini_timer.is_active:
                 cli.timers.mini_timer.pause()
-            cli.timers.reset_chime()
             cli.initial_stack = copy.deepcopy(cli.triage_stack)
 
 
@@ -878,7 +905,7 @@ class ResolveCommand(Command):
                 cli.mode = "EXIT"
                 return "REDRAW"
 
-            is_break_obj = cli.triage_stack and isinstance(cli.triage_stack[0], Break)
+            is_break_obj = isinstance(resolved_item, Break)
             if cli.mode == "BREAK" and is_break_obj:
                 cli._transition_from_break_to_focus(break_item=resolved_item)
                 return "REDRAW"
@@ -1105,7 +1132,7 @@ class IgnoreCommand(Command):
                     resolved_item = item.clone_with_state('-', '-')
                     cli.commit_to_ledger("Cancelled", [resolved_item])
         elif cli.mode in ["FOCUS", "BREAK"]:
-            return ResolutionCommand(self.parts).execute(cli)
+            return ResolveCommand(self.parts).execute(cli)
 
 
 class CommandParser:
@@ -1205,6 +1232,7 @@ class FocusCLI:
         self.initial_stack = []
         self.last_msg = "FocusCLI Ready."
         self.timers = TimerManager(ALERT_THRESHOLD)
+        self.timers.last_chime_timestamp = 0
         self.chimed_meetings = set()
         self.original_termios = None
         self.mini_timer_duration = 2
@@ -1715,7 +1743,6 @@ class FocusCLI:
             self.timers.mini_timer.reset(self.mini_timer_duration * 60)
         self.commit_to_ledger("Focus Session Re-started at", [])
         self.last_msg = "Focus Resumed"
-        self.timers.reset_chime()
 
     def _transition_from_focus_to_break(self, parts):
         if self.mode == "BREAK":
@@ -1745,13 +1772,10 @@ class FocusCLI:
         self.triage_stack.insert(0, break_item)
 
         # Add to chimed_meetings to prevent redundant chime for manual breaks
-        state_str = break_item.state if break_item.state.strip() else ''
-        meeting_id = f"[{state_str}] {break_item.content}_{break_item.start_time}"
-        self.chimed_meetings.add(meeting_id)
+        self.chimed_meetings.add(break_item.get_meeting_id())
 
         self.mode = "BREAK"
         self.break_meeting_interrupted = False
-        self.timers.reset_chime()
         self.commit_to_ledger(f"Break for {duration} at", [break_item])
         return
 
@@ -1843,6 +1867,11 @@ class FocusCLI:
             if self.timers.mini_timer.should_chime(interval_seconds=30):
                 self.play_chime(sound='tick')
 
+    def play_session_chime(self, sound='chime', interval_seconds=2):
+        """Plays a chime and updates the last_chime_timestamp to prevent redundant alerts."""
+        if self.timers.should_chime(interval_seconds, update_timestamp=True):
+             self.play_chime(sound=sound)
+
     def play_chime(self, sound='chime'):
         if CHIME_COMMAND:
             subprocess.Popen(shlex.split(CHIME_COMMAND), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -1872,48 +1901,50 @@ class FocusCLI:
 
     def check_chime(self):
         if self.mode == "BREAK":
-            remaining = 0
+            remaining = None
             if self.triage_stack and isinstance(self.triage_stack[0], Break):
                 break_item = self.triage_stack[0]
                 if break_item.end_time:
                     remaining = int((break_item.end_time - datetime.now()).total_seconds())
 
-            if remaining <= 0 or self.break_meeting_interrupted:
-                if self.timers.should_chime(interval_seconds=60):
-                    self.play_chime()
-                    if remaining <= 0:
-                        self.last_msg = "!! BREAK EXPIRED !!"
+            if (remaining is not None and remaining <= 0) or self.break_meeting_interrupted:
+                self.play_session_chime(interval_seconds=60)
+                if remaining is not None and remaining <= 0:
+                    self.last_msg = "!! BREAK EXPIRED !!"
         elif self.mode in ["FOCUS", "TRIAGE"]:
             is_meeting = False
             if self.mode == "FOCUS" and self.triage_stack:
                 is_meeting = isinstance(self.triage_stack[0], Meeting)
             if self.timers.focus_timer.is_exceeded():
-                if self.timers.should_chime(interval_seconds=60):
-                    if not is_meeting:
-                        self.play_chime()
+                if not is_meeting:
+                    self.play_session_chime(interval_seconds=60)
 
 
     def check_meetings(self):
         if self.mode not in ["FOCUS", "BREAK"]: return
         if not self.triage_stack: return
         now = datetime.now()
-        if self.mode in ["FOCUS", "BREAK"] and isinstance(self.triage_stack[0], Break):
-            break_item = self.triage_stack[0]
-            if not break_item.end_time:
-                break_item.start_time = datetime.now()
-                break_item.duration = 5
-                break_item.end_time = break_item.start_time + timedelta(minutes=5)
-            self.mode = "BREAK"
+        top_item = self.triage_stack[0]
+        if isinstance(top_item, Break):
+            if not top_item.end_time:
+                top_item.start_time = datetime.now()
+                top_item.duration = 5
+                top_item.end_time = top_item.start_time + timedelta(minutes=5)
+                # Suppress chime for auto-initialized breaks at the top of the stack
+                self.chimed_meetings.add(top_item.get_meeting_id())
+
+            if self.mode != "BREAK":
+                self.mode = "BREAK"
+                self.last_msg = f"Break Meeting Started: {top_item.content}"
 
         # 2. Initial "Meeting Starting" chime (for focused OR due meetings)
         all_active_meetings = [m for m in self.triage_stack if isinstance(m, Meeting) and m.is_active(now=now)]
         for m in all_active_meetings:
-             state_str = m.state if m.state.strip() else ''
-             meeting_id = f"[{state_str}] {m.content}_{m.start_time}"
+             meeting_id = m.get_meeting_id()
              if meeting_id not in self.chimed_meetings:
                  if self.mode == "BREAK" and not isinstance(m, Break):
                      self.break_meeting_interrupted = True
-                 self.play_chime()
+                 self.play_session_chime()
                  self.chimed_meetings.add(meeting_id)
                  self.timers.chimer.load(m.content)
                  self.last_msg = f"Meeting Starting: {m.content}"
@@ -1927,7 +1958,7 @@ class FocusCLI:
                  self.timers.chimer.load(due_meeting.content)
 
             if self.timers.chimer.should_chime(interval_seconds=15):
-                self.play_chime()
+                self.play_session_chime(interval_seconds=0)
         else:
              # If no due meeting is in timeline, focused meetings should NOT trigger reminders
              top_item = self.triage_stack[0]
@@ -1935,11 +1966,6 @@ class FocusCLI:
                   if self.timers.chimer.meeting_name == top_item.content:
                        self.timers.chimer.stop()
 
-        # 4. Mode transition for started break meetings
-        if isinstance(self.triage_stack[0], Break) and self.triage_stack[0].is_active():
-            if self.mode != "BREAK":
-                self.mode = "BREAK"
-                self.last_msg = f"Break Meeting Started: {self.triage_stack[0].content}"
 
 
     def render_break(self):
@@ -2108,11 +2134,11 @@ class FocusCLI:
                 elif current_second != last_render_second:
                     if self.mode in ["FOCUS", "BREAK", "TRIAGE"]: self.update_timer_ui()
                     last_render_second = current_second
-                if self.mode in ["FOCUS", "BREAK", "TRIAGE"]: self.check_chime()
                 if self.mode in ["FOCUS", "BREAK"]:
                     self.timers.update(self.mode)
                     self.check_meetings()
                     if self.mode == "FOCUS": self.update_mini_timer()
+                if self.mode in ["FOCUS", "BREAK", "TRIAGE"]: self.check_chime()
                 rlist, _, _ = select.select([fd], [], [], 0.1)
                 if rlist:
                     char = self._read_keypress(fd)
@@ -2201,11 +2227,6 @@ class FocusCLI:
 
     def render_focus(self):
         if not self.triage_stack: return
-        if isinstance(self.triage_stack[0], Break):
-            # Lifecycle management for Break objects at the top of the stack is handled in check_meetings
-            self.mode = "BREAK"
-            self.timers.reset_chime()
-            return
         now = time.time()
         if not self.timers.task_timer.is_active: self.timers.task_timer.start(now)
         if not self.timers.focus_timer.is_active: self.timers.focus_timer.start(now)
