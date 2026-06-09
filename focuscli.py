@@ -865,39 +865,60 @@ class ResolveCommand(Command):
         if not cli.triage_stack:
             return
 
-        top_item = cli.triage_stack[0]
-        focus_item, parent_item, focus_path = cli._get_recursive_focus(top_item)
-        is_note = isinstance(focus_item, Note)
+        has_index = len(self.parts) > 1 and (self.parts[1].isdigit() or '.' in self.parts[1])
+
+        if has_index:
+            target_item, parent_item, target_path = cli._get_item_by_hierarchical_index(self.parts[1])
+            if target_item is None:
+                return "REDRAW"
+            top_level_idx = int(self.parts[1].split('.')[0])
+            top_item = cli.triage_stack[top_level_idx]
+        else:
+            top_item = cli.triage_stack[0]
+            if cli.mode in ["FOCUS", "BREAK"]:
+                target_item, parent_item, target_path = cli._get_recursive_focus(top_item)
+            else:
+                # TRIAGE mode default
+                target_item, parent_item, target_path = top_item, None, []
+
+        is_note = isinstance(target_item, Note)
 
         if is_note and base_cmd in ['x', '-', 'i']:
-            if not focus_path:
-                cli.triage_stack.pop(0)
-            cli.timers.task_timer.stop()
-            cli.initial_stack = copy.deepcopy(cli.triage_stack)
-            return
+            cli.last_msg = "Invalid action for a note."
+            return "REDRAW"
 
         if base_cmd in ['x', '-', 'i']:
             effective_cmd = '-' if base_cmd == 'i' else base_cmd
             marker = 'x' if effective_cmd == 'x' else ('-' if effective_cmd == '-' else '>')
             ledger_label = 'Task Completed' if effective_cmd == 'x' else (
                 'Task Cancelled' if effective_cmd == '-' else 'Task Deferred')
-            resolved_item = focus_item.clone_with_state(marker, marker) if isinstance(focus_item, Task) else focus_item
 
-            if not focus_path:
-                item_to_record = cli.triage_stack.pop(0)
-                cli.triage_stack.promote_due_meetings()
+            resolved_item = target_item.clone_with_state(marker, marker) if isinstance(target_item, Task) else target_item
+
+            is_top_level = not target_path
+            if is_top_level:
+                # If target_path is empty, we are resolving a top-level item in triage_stack
+                # Use the calculated top_level_idx if we had an index, else 0
+                idx_to_pop = top_level_idx if has_index else 0
+                item_to_record = cli.triage_stack.pop(idx_to_pop)
+                if idx_to_pop == 0:
+                    cli.triage_stack.promote_due_meetings()
+
                 resolved_top = item_to_record.clone_with_state(marker, marker) if isinstance(item_to_record, Task) else item_to_record
                 cli.commit_to_ledger(ledger_label, [resolved_top])
             else:
-                cli._update_recursive_item(top_item, focus_path, resolved_item)
-                hierarchical_context = cli._get_path_pruned_item(top_item, focus_path, resolved_item)
-                if isinstance(hierarchical_context, Task) and focus_path != []:
+                cli._update_recursive_item(top_item, target_path, resolved_item)
+                hierarchical_context = cli._get_path_pruned_item(top_item, target_path, resolved_item)
+                if isinstance(hierarchical_context, Task) and target_path != []:
                     hierarchical_context.state = ' '
                 cli.commit_to_ledger(ledger_label, [hierarchical_context])
 
-            if cli.timers.mini_timer.is_active:
-                cli.timers.mini_timer.reset(cli.mini_timer_duration * 60)
-            cli.timers.task_timer.stop()
+            # Logic for when the focused task was resolved
+            if not has_index or top_level_idx == 0:
+                if cli.timers.mini_timer.is_active:
+                    cli.timers.mini_timer.reset(cli.mini_timer_duration * 60)
+                cli.timers.task_timer.stop()
+
             cli.initial_stack = copy.deepcopy(cli.triage_stack)
 
             if not cli.triage_stack and cli.mode == "FOCUS":
@@ -906,7 +927,7 @@ class ResolveCommand(Command):
                 return "REDRAW"
 
             is_break_obj = isinstance(resolved_item, Break)
-            if cli.mode == "BREAK" and is_break_obj:
+            if cli.mode == "BREAK" and is_break_obj and (not has_index or top_level_idx == 0):
                 cli._transition_from_break_to_focus(break_item=resolved_item)
                 return "REDRAW"
 
@@ -915,19 +936,34 @@ class EditCommand(Command):
     def execute(self, cli):
         if not cli.triage_stack:
             return
-        if cli.mode == "TRIAGE":
-            idx = int(self.parts[1]) if len(self.parts) > 1 else 0
-            if 0 <= idx < len(cli.triage_stack):
-                cli.triage_stack[idx] = cli._edit_item_obj(cli.triage_stack[idx])
-                cli.initial_stack = copy.deepcopy(cli.triage_stack)
-        elif cli.mode in ["FOCUS", "BREAK"]:
+
+        has_index = len(self.parts) > 1 and (self.parts[1].isdigit() or '.' in self.parts[1])
+
+        if has_index:
+            target_item, parent_item, target_path = cli._get_item_by_hierarchical_index(self.parts[1])
+            if target_item is None:
+                return "REDRAW"
+            top_level_idx = int(self.parts[1].split('.')[0])
+            top_item = cli.triage_stack[top_level_idx]
+        else:
             top_item = cli.triage_stack[0]
-            focus_item, _, focus_path = cli._get_recursive_focus(top_item)
-            new_item = cli._edit_item_obj(focus_item)
-            if new_item != focus_item:
-                cli._update_recursive_item(top_item, focus_path, new_item)
-                cli.initial_stack = copy.deepcopy(cli.triage_stack)
-            return "REDRAW"
+            if cli.mode in ["FOCUS", "BREAK"]:
+                target_item, parent_item, target_path = cli._get_recursive_focus(top_item)
+            else:
+                # TRIAGE mode default
+                target_item, parent_item, target_path = top_item, None, []
+
+        new_item = cli._edit_item_obj(target_item)
+        if new_item != target_item:
+            if not target_path:
+                # Top level edit
+                idx = top_level_idx if has_index else 0
+                cli.triage_stack[idx] = new_item
+            else:
+                cli._update_recursive_item(top_item, target_path, new_item)
+            cli.initial_stack = copy.deepcopy(cli.triage_stack)
+
+        return "REDRAW"
 
 
 class DeferCommand(Command):
@@ -1124,22 +1160,14 @@ class AssignCommand(Command):
 
 class IgnoreCommand(Command):
     def execute(self, cli):
-        if cli.mode == "TRIAGE":
-            idx = int(self.parts[1]) if len(self.parts) > 1 else (0 if len(cli.triage_stack) == 1 else None)
-            if idx is not None and 0 <= idx < len(cli.triage_stack):
-                item = cli.triage_stack.pop(idx)
-                if isinstance(item, Task):
-                    resolved_item = item.clone_with_state('-', '-')
-                    cli.commit_to_ledger("Cancelled", [resolved_item])
-        elif cli.mode in ["FOCUS", "BREAK"]:
-            return ResolveCommand(self.parts).execute(cli)
+        return ResolveCommand(self.parts).execute(cli)
 
 
 class CommandParser:
     @staticmethod
     def parse(cli, cmd_string, mode):
-        # Split symbol commands from their numeric arguments (e.g., >1, n5, x2)
-        cmd_clean = re.sub(r'^(>>|>|[a-zA-Z]|[-x])(-?\d+)', r'\1 \2', cmd_string)
+        # Split symbol commands from their numeric arguments (e.g., >1, n5, x2, x0.1.2)
+        cmd_clean = re.sub(r'^(>>|>|[a-zA-Z]|[-x])(-?[\d\.]+)', r'\1 \2', cmd_string)
 
         def safe_split(s):
             lex = shlex.shlex(s, posix=True)
@@ -1550,6 +1578,41 @@ class FocusCLI:
         finally:
             if os.path.exists(temp_path):
                 os.remove(temp_path)
+
+    def _get_item_by_hierarchical_index(self, index_str):
+        """
+        Traverse the task stack using a dot-separated index string (e.g., '0.1.2').
+        Returns (item, parent, path) or (None, None, None) if invalid.
+        """
+        try:
+            parts = [int(p) for p in index_str.split('.')]
+        except ValueError:
+            self.last_msg = f"Error: Invalid index format '{index_str}'."
+            return None, None, None
+
+        if not parts:
+            return None, None, None
+
+        # Top level
+        idx = parts[0]
+        if idx < 0 or idx >= len(self.triage_stack):
+            self.last_msg = f"Error: Invalid top-level index {idx}."
+            return None, None, None
+
+        current_item = self.triage_stack[idx]
+        parent = None
+        path = []
+
+        # Sub levels
+        for sub_idx in parts[1:]:
+            if not hasattr(current_item, 'children') or sub_idx < 0 or sub_idx >= len(current_item.children):
+                self.last_msg = f"Error: Invalid sub-index {sub_idx} for item '{current_item.content}'."
+                return None, None, None
+            parent = current_item
+            current_item = current_item.children[sub_idx]
+            path.append(sub_idx)
+
+        return current_item, parent, path
 
     def _get_recursive_focus(self, item):
         """Recursively find the deepest pending task."""
