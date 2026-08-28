@@ -165,5 +165,58 @@ class TestBreak(IsolatedTestCase):
         self.assertEqual(self.cli.mode, "BREAK")
         self.assertEqual(self.cli.triage_stack[0].duration, 7)
 
+    def test_duration_parsing(self):
+        """Test parsing duration from [B] lines without start/end times."""
+        b1 = Break.from_line("[B] Go to Lunch 60m")
+        self.assertEqual(b1.duration, 60)
+        self.assertEqual(b1.content, "Go to Lunch 60m")
+        self.assertIsNone(b1.start_time)
+        self.assertIsNone(b1.end_time)
+
+        b2 = Break.from_line("[B] Drop off Dry Cleaning 30m")
+        self.assertEqual(b2.duration, 30)
+
+        b3 = Break.from_line("[B] Quick Rest 1h")
+        self.assertEqual(b3.duration, 60)
+
+        b4 = Break.from_line("[B] Extended Rest 1h30m")
+        self.assertEqual(b4.duration, 90)
+
+        b5 = Break.from_line("[B] Extended Rest 1h 30m")
+        self.assertEqual(b5.duration, 90)
+
+        b6 = Break.from_line("[B] Plain Break")
+        self.assertIsNone(b6.duration)
+
+    def test_duration_break_activation(self):
+        """Test activating a duration break when placed at index 0 of the stack."""
+        self.cli.mode = "FOCUS"
+        self.cli.handle_command("N [B] Go to Lunch 60m")
+
+        top_item = self.cli.triage_stack[0]
+        self.assertIsInstance(top_item, Break)
+        self.assertEqual(top_item.duration, 60)
+        self.assertIsNotNone(top_item.start_time)
+        self.assertIsNotNone(top_item.end_time)
+        self.assertEqual((top_item.end_time - top_item.start_time).total_seconds(), 3600)
+        self.assertEqual(self.cli.mode, "BREAK")
+
+    def test_duration_break_activation_when_reaching_index_zero(self):
+        """Test a duration break in the stack becomes active when moving to index 0."""
+        self.cli.mode = "FOCUS"
+        t1 = Task.from_line("[] Regular Task")
+        b1 = Break.from_line("[B] Drop off Dry Cleaning 30m")
+        self.cli.triage_stack = [t1, b1]
+
+        self.cli.handle_command("x")  # Complete regular task
+        self.assertEqual(len(self.cli.triage_stack), 1)
+        top_item = self.cli.triage_stack[0]
+        self.assertIsInstance(top_item, Break)
+        self.assertEqual(top_item.duration, 30)
+        self.assertIsNotNone(top_item.start_time)
+        self.assertIsNotNone(top_item.end_time)
+        self.assertEqual((top_item.end_time - top_item.start_time).total_seconds(), 1800)
+        self.assertEqual(self.cli.mode, "BREAK")
+
 if __name__ == '__main__':
     unittest.main()

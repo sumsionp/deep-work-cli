@@ -153,6 +153,19 @@ class Task(Item):
         return None, None
 
     @classmethod
+    def parse_duration(cls, text):
+        """Parses standalone duration pattern like 60m, 1h, 1h30m, 1h 30m from text."""
+        m = re.search(r'\b(?:(\d+)\s*H\s*(\d+)\s*M|(\d+)\s*H|(\d+)\s*M)\b', text, re.IGNORECASE)
+        if m:
+            if m.group(1) is not None and m.group(2) is not None:
+                return int(m.group(1)) * 60 + int(m.group(2))
+            elif m.group(3) is not None:
+                return int(m.group(3)) * 60
+            elif m.group(4) is not None:
+                return int(m.group(4))
+        return None
+
+    @classmethod
     def from_line(cls, line, indent=0):
         state, content = cls._parse_common(line)
         if content is not None:
@@ -375,8 +388,9 @@ class Break(Meeting):
             if meeting:
                  return cls(content, indent, state, meeting.start_time, meeting.end_time, meeting.duration)
 
-            # If no time schedule, return uninitialized Break object
-            return cls(content, indent, state)
+            # If no time schedule, check for duration pattern
+            duration = cls.parse_duration(content)
+            return cls(content, indent, state, duration=duration)
         return None
 
     BREAK_QUOTES = [
@@ -925,6 +939,9 @@ class ResolveCommand(Command):
                 cli.commit_to_ledger("Focus Session Complete", [])
                 cli.mode = "EXIT"
                 return "REDRAW"
+
+            if cli.mode in ["FOCUS", "BREAK"]:
+                cli.check_meetings()
 
             is_break_obj = isinstance(resolved_item, Break)
             if cli.mode == "BREAK" and is_break_obj and (not has_index or top_level_idx == 0):
@@ -1999,8 +2016,9 @@ class FocusCLI:
         if isinstance(top_item, Break):
             if not top_item.end_time:
                 top_item.start_time = datetime.now()
-                top_item.duration = 5
-                top_item.end_time = top_item.start_time + timedelta(minutes=5)
+                duration = top_item.duration if top_item.duration is not None else 5
+                top_item.duration = duration
+                top_item.end_time = top_item.start_time + timedelta(minutes=duration)
                 # Suppress chime for auto-initialized breaks at the top of the stack
                 self.chimed_meetings.add(top_item.get_meeting_id())
 
